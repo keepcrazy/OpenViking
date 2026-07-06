@@ -189,7 +189,12 @@ async def add_resource(
         original_filename = resolved.original_filename
         allow_local_path_resolution = True
     elif path is not None:
-        path = require_remote_resource_source(path)
+        connector_tos_source = (
+            path.startswith("tos://")
+            and service.resources._should_use_connector(path)
+        )
+        if not connector_tos_source:
+            path = require_remote_resource_source(path)
     if path is None:
         raise InvalidArgumentError("Either 'path' or 'temp_file_id' must be provided.")
 

@@ -97,6 +97,50 @@ async def test_add_resource_forwards_args_to_service(
     assert seen["args"] == {"feishu_access_token": "u-test"}
 
 
+async def test_add_resource_allows_tos_only_for_enabled_connector_request(
+    client: httpx.AsyncClient,
+    service,
+    monkeypatch,
+):
+    seen = {}
+
+    async def fake_add_resource(**kwargs):
+        seen.update(kwargs)
+        return {"status": "accepted", "task_id": "task-1"}
+
+    monkeypatch.setattr(service.resources, "_should_use_connector", lambda _path: True)
+    monkeypatch.setattr(service.resources, "add_resource", fake_add_resource)
+
+    resp = await client.post(
+        "/api/v1/resources",
+        json={
+            "path": "tos://bucket/prefix",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert seen["path"] == "tos://bucket/prefix"
+    assert seen["args"] == {}
+
+
+async def test_add_resource_rejects_tos_when_connector_is_not_selected(
+    client: httpx.AsyncClient,
+    service,
+    monkeypatch,
+):
+    monkeypatch.setattr(service.resources, "_should_use_connector", lambda _path: False)
+
+    resp = await client.post(
+        "/api/v1/resources",
+        json={
+            "path": "tos://bucket/prefix",
+        },
+    )
+
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "PERMISSION_DENIED"
+
+
 async def test_add_resource_with_telemetry_wait(
     client: httpx.AsyncClient,
     sample_markdown_file,
