@@ -29,7 +29,7 @@ type ExtractedTurnMessage = ReturnType<typeof extractNewTurnMessages>["messages"
 
 type CaptureCursor = {
   messageCount: number;
-  anchors: Array<{ index: number; fingerprint: string }>;
+  prefixFingerprint: string;
 };
 
 type ContextEngineInfo = {
@@ -150,7 +150,6 @@ const ARCHIVE_BUDGET_CAP = 8_000;
 const RESERVED_MIN = 20_000;
 const RESERVED_RATIO = 0.15;
 const ARCHIVE_INDEX_TRIM_LIMIT = 10;
-const CAPTURE_CURSOR_ANCHOR_COUNT = 3;
 const MAX_CAPTURE_CURSORS = 1_000;
 
 function captureMessageFingerprint(message: AgentMessage): string {
@@ -167,21 +166,25 @@ function captureMessageFingerprint(message: AgentMessage): string {
     .digest("hex");
 }
 
+function capturePrefixFingerprint(messages: AgentMessage[], messageCount: number): string {
+  const hash = createHash("sha256");
+  for (let index = 0; index < messageCount; index += 1) {
+    hash.update(captureMessageFingerprint(messages[index]));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
 function buildCaptureCursor(messages: AgentMessage[]): CaptureCursor {
-  const firstAnchor = Math.max(0, messages.length - CAPTURE_CURSOR_ANCHOR_COUNT);
   return {
     messageCount: messages.length,
-    anchors: messages.slice(firstAnchor).map((message, offset) => ({
-      index: firstAnchor + offset,
-      fingerprint: captureMessageFingerprint(message),
-    })),
+    prefixFingerprint: capturePrefixFingerprint(messages, messages.length),
   };
 }
 
 function captureCursorMatches(cursor: CaptureCursor, messages: AgentMessage[]): boolean {
-  return cursor.messageCount <= messages.length && cursor.anchors.every(
-    ({ index, fingerprint }) => captureMessageFingerprint(messages[index]) === fingerprint,
-  );
+  return cursor.messageCount <= messages.length &&
+    capturePrefixFingerprint(messages, cursor.messageCount) === cursor.prefixFingerprint;
 }
 
 function allocateContextBudget(totalBudget: number, instructionTokens = 0): ContextBudgets {

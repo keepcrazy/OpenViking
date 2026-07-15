@@ -362,6 +362,43 @@ describe("context-engine afterTurn()", () => {
     expect(client.addSessionMessage.mock.calls[1][2][0].text).toBe("new question");
   });
 
+  it("resets the capture cursor when the middle of a long transcript is rewritten", async () => {
+    const { engine, client } = makeEngine();
+    const history = [
+      { role: "assistant", content: "history 0" },
+      { role: "user", content: "original middle" },
+      { role: "assistant", content: "history 2" },
+      { role: "user", content: "history 3" },
+      { role: "assistant", content: "history 4" },
+      { role: "user", content: "history 5" },
+    ];
+    const user = { role: "user", content: "current question" };
+
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages: [...history, user],
+      prePromptMessageCount: history.length,
+    });
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages: [
+        history[0],
+        { role: "user", content: "rewritten middle" },
+        ...history.slice(2),
+        user,
+        { role: "assistant", content: "current answer" },
+      ],
+      prePromptMessageCount: 0,
+    });
+
+    const capturedTexts = client.addSessionMessage.mock.calls.flatMap((call) =>
+      (call[2] as Array<{ text?: string }>).map((part) => part.text),
+    );
+    expect(capturedTexts).toContain("rewritten middle");
+  });
+
   it("passes the latest non-system message timestamp to addSessionMessage as ISO string", async () => {
     const { engine, client } = makeEngine();
 
