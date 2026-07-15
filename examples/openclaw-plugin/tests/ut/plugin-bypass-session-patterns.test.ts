@@ -1,8 +1,19 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import contextEnginePlugin from "../../index.js";
 
 type HookHandler = (event: unknown, ctx?: Record<string, unknown>) => unknown;
+
+function okResponse(result: unknown): Response {
+  return new Response(JSON.stringify({ status: "ok", result }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function setupPlugin(pluginConfig?: Record<string, unknown>) {
   const handlers = new Map<string, HookHandler>();
@@ -91,5 +102,65 @@ describe("plugin bypass session patterns", () => {
     );
 
     expect(engine.commitOVSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("plugin before_reset context-engine commit", () => {
+  it("commits with senderId even before the registered context-engine factory is first used", async () => {
+    const fetchMock = vi.fn(async () =>
+      okResponse({
+        status: "completed",
+        archived: false,
+        memories_extracted: {},
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { handlers, registerContextEngine, logger } = setupPlugin();
+
+    expect(registerContextEngine).toHaveBeenCalledWith("openviking", expect.any(Function));
+    const hook = handlers.get("before_reset");
+    expect(hook).toBeTruthy();
+
+    await hook!(
+      {},
+      {
+        sessionId: "runtime-session",
+        sessionKey: "agent:main:chat:runtime-session",
+        senderId: "ou_reset_sender",
+      },
+    );
+
+    const commitCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("/api/v1/sessions/") && String(url).endsWith("/commit"),
+    );
+    expect(commitCall).toBeTruthy();
+    const [, init] = commitCall as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(headers.get("X-OpenViking-User")).toBe("ou_reset_sender");
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("committed OV session on reset for session=runtime-session"),
+    );
+  });
+
+  it("skips before_reset commit without senderId and does not use a default user", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { handlers, logger } = setupPlugin();
+
+    const hook = handlers.get("before_reset");
+    expect(hook).toBeTruthy();
+
+    await hook!(
+      {},
+      {
+        sessionId: "runtime-session",
+        sessionKey: "agent:main:chat:runtime-session",
+      },
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("senderId is unavailable"),
+    );
   });
 });

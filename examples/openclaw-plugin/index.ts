@@ -1935,7 +1935,6 @@ const contextEnginePlugin = {
       { name: "openviking_tool_result_list" },
     );
 
-    let contextEngineRef: ContextEngineWithCommit | null = null;
     const sessionAgentResolver = createSessionAgentResolver(cfg.agent_prefix);
     const rememberSessionAgentId = (ctx: SessionAgentLookup) => {
       sessionAgentResolver.remember(ctx);
@@ -1967,6 +1966,22 @@ const contextEnginePlugin = {
       }
       return result.resolved;
     };
+    let contextEngineRef: ContextEngineWithCommit | null = null;
+    const getContextEngine = (): ContextEngineWithCommit => {
+      if (!contextEngineRef) {
+        contextEngineRef = createMemoryOpenVikingContextEngine({
+          id: contextEnginePlugin.id,
+          name: contextEnginePlugin.name,
+          version: "0.1.0",
+          cfg,
+          logger: api.logger,
+          getClient: getUserClient,
+          resolveAgentId,
+          rememberSessionAgentId,
+        });
+      }
+      return contextEngineRef;
+    };
 
     api.on("session_start", async (_event: unknown, ctx?: HookAgentContext) => {
       rememberSessionAgentId(ctx ?? {});
@@ -1981,20 +1996,31 @@ const contextEnginePlugin = {
         );
         return;
       }
-      const sessionId = ctx?.sessionId;
-      if (sessionId && contextEngineRef) {
-        try {
-          const ok = await contextEngineRef.commitOVSession({
-            sessionId,
-            sessionKey: ctx?.sessionKey,
-            runtimeContext: ctx?.senderId ? { senderId: ctx.senderId } : undefined,
-          });
-          if (ok) {
-            api.logger.info(`openviking: committed OV session on reset for session=${sessionId}`);
-          }
-        } catch (err) {
-          api.logger.warn(`openviking: failed to commit OV session on reset: ${String(err)}`);
+      const sessionId = typeof ctx?.sessionId === "string" ? ctx.sessionId.trim() : "";
+      if (!sessionId) {
+        api.logger.warn(
+          `openviking: skipped before_reset commit because sessionId is unavailable (sessionKey=${ctx?.sessionKey ?? "none"})`,
+        );
+        return;
+      }
+      const senderId = extractToolSenderId(ctx);
+      if (!senderId) {
+        api.logger.warn(
+          `openviking: skipped before_reset commit because senderId is unavailable (session=${sessionId})`,
+        );
+        return;
+      }
+      try {
+        const ok = await getContextEngine().commitOVSession({
+          sessionId,
+          sessionKey: ctx?.sessionKey,
+          runtimeContext: { senderId },
+        });
+        if (ok) {
+          api.logger.info(`openviking: committed OV session on reset for session=${sessionId}`);
         }
+      } catch (err) {
+        api.logger.warn(`openviking: failed to commit OV session on reset: ${String(err)}`);
       }
     });
     api.on("after_compaction", async (_event: unknown, _ctx?: HookAgentContext) => {
@@ -2003,17 +2029,7 @@ const contextEnginePlugin = {
 
     if (typeof api.registerContextEngine === "function") {
       api.registerContextEngine(contextEnginePlugin.id, () => {
-        contextEngineRef = createMemoryOpenVikingContextEngine({
-          id: contextEnginePlugin.id,
-          name: contextEnginePlugin.name,
-          version: "0.1.0",
-          cfg,
-          logger: api.logger,
-          getClient: getUserClient,
-          resolveAgentId,
-          rememberSessionAgentId,
-        });
-        return contextEngineRef;
+        return getContextEngine();
       });
       api.logger.info(
         "openviking: registered context-engine (assemble=archive+active+auto-recall, afterTurn=auto-capture, session→OV id=uuid-or-sha256 + diag/Phase2 options)",
