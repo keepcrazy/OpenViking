@@ -57,6 +57,11 @@ function makeEngine(contextResult: unknown) {
     getClient,
     resolveAgentId,
   });
+  const assemble = engine.assemble.bind(engine);
+  engine.assemble = (params) => assemble({
+    ...params,
+    runtimeContext: { senderId: "ou_test_sender", ...(params.runtimeContext ?? {}) },
+  });
 
   return {
     engine,

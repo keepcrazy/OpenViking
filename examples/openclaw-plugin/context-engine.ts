@@ -877,7 +877,7 @@ export function createMemoryOpenVikingContextEngine(params: {
   version?: string;
   cfg: Required<MemoryOpenVikingConfig>;
   logger: Logger;
-  getClient: () => Promise<OpenVikingClient>;
+  getClient: (senderId: string) => Promise<OpenVikingClient>;
   /** Extra args help match hook-populated routing when OpenClaw provides sessionKey / OV session id. */
   resolveAgentId: (sessionId: string, sessionKey?: string, ovSessionId?: string) => string;
   rememberSessionAgentId?: (ctx: {
@@ -919,8 +919,15 @@ export function createMemoryOpenVikingContextEngine(params: {
       );
       return false;
     }
+    const sender = extractRuntimeSenderId(params.runtimeContext);
+    if (!sender.senderId) {
+      logger.warn?.(
+        `openviking: commit skipped because senderId is unavailable (sessionId=${sessionId})`,
+      );
+      return false;
+    }
     try {
-      const client = await getClient();
+      const client = await getClient(sender.senderId);
       rememberSessionAgentId?.({
         sessionId,
         sessionKey,
@@ -1122,6 +1129,10 @@ export function createMemoryOpenVikingContextEngine(params: {
         return assemblePassthrough(OVSessionId, "session_bypassed", messages, originalTokens);
       }
 
+      if (!sender.senderId) {
+        return assemblePassthrough(OVSessionId, "missing_sender_id", messages, originalTokens);
+      }
+
       if (isTransformContextAssemble) {
         if (latestMessage?.role !== "user") {
           return assemblePassthrough(OVSessionId, "transform_context_non_user_tail", messages, originalTokens, {
@@ -1147,7 +1158,7 @@ export function createMemoryOpenVikingContextEngine(params: {
         }
 
         try {
-          const client = await getClient();
+          const client = await getClient(sender.senderId);
           const routingRef = assembleParams.sessionId ?? sessionKey ?? OVSessionId;
           const agentId = resolveAgentId(routingRef, sessionKey, OVSessionId);
           const recall = await buildAutoRecallContext({
@@ -1187,7 +1198,7 @@ export function createMemoryOpenVikingContextEngine(params: {
       }
 
       try {
-        const client = await getClient();
+        const client = await getClient(sender.senderId);
         const routingRef = assembleParams.sessionId ?? sessionKey ?? OVSessionId;
         const agentId = resolveAgentId(routingRef, sessionKey, OVSessionId);
         const ctx = await client.getSessionContext(OVSessionId, tokenBudget, agentId);
@@ -1300,6 +1311,16 @@ export function createMemoryOpenVikingContextEngine(params: {
           return;
         }
 
+        if (!sender.senderId) {
+          diag("afterTurn_skip", OVSessionId, {
+            reason: "missing_sender_id",
+            totalMessages: afterTurnParams.messages?.length ?? 0,
+            senderIdFound: false,
+            senderId: null,
+          });
+          return;
+        }
+
         const messages = afterTurnParams.messages ?? [];
         if (messages.length === 0) {
           diag("afterTurn_skip", OVSessionId, {
@@ -1349,7 +1370,7 @@ export function createMemoryOpenVikingContextEngine(params: {
           messages: newMsgFull,
         });
 
-        const client = await getClient();
+        const client = await getClient(sender.senderId);
         const createdAt = pickLatestCreatedAt(turnMessages);
         const senderRoleId = toRoleId(sender.senderId);
         // 发送结构化消息：统一 role 为 user，通过 parts 区分类型
@@ -1427,7 +1448,7 @@ export function createMemoryOpenVikingContextEngine(params: {
               "memories_extracted appears only after that task completes — not in this immediate response.",
           );
           void pollPhase2ExtractionOutcome(
-            getClient,
+            () => getClient(sender.senderId!),
             commitResult.task_id,
             agentId,
             logger,
@@ -1447,6 +1468,7 @@ export function createMemoryOpenVikingContextEngine(params: {
 
     async compact(compactParams): Promise<CompactResult> {
       const { sessionKey, ovSessionId: OVSessionId } = resolveSessionIdentity(compactParams);
+      const sender = extractRuntimeSenderId(compactParams.runtimeContext);
       const tokenBudget = validTokenBudget(compactParams.tokenBudget) ?? 128_000;
       diag("compact_entry", OVSessionId, {
         tokenBudget,
@@ -1470,7 +1492,20 @@ export function createMemoryOpenVikingContextEngine(params: {
         };
       }
 
-      const client = await getClient();
+      if (!sender.senderId) {
+        diag("compact_result", OVSessionId, {
+          ok: true,
+          compacted: false,
+          reason: "missing_sender_id",
+        });
+        return {
+          ok: true,
+          compacted: false,
+          reason: "missing_sender_id",
+        };
+      }
+
+      const client = await getClient(sender.senderId);
       const agentId = resolveAgentId(compactParams.sessionId, sessionKey, OVSessionId);
       const tokensBeforeOriginal = validTokenBudget(compactParams.currentTokenCount);
       let preCommitEstimatedTokens: number | undefined;

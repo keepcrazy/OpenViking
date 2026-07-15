@@ -52,6 +52,16 @@ function makeEngine(commitResult: unknown, opts?: { throwError?: Error }) {
     getClient,
     resolveAgentId,
   });
+  const commitOVSession = engine.commitOVSession.bind(engine);
+  engine.commitOVSession = (params) => commitOVSession({
+    ...params,
+    runtimeContext: { senderId: "ou_test_sender", ...(params.runtimeContext ?? {}) },
+  });
+  const compact = engine.compact.bind(engine);
+  engine.compact = (params) => compact({
+    ...params,
+    runtimeContext: { senderId: "ou_test_sender", ...(params.runtimeContext ?? {}) },
+  });
 
   return {
     engine,
@@ -64,6 +74,18 @@ function makeEngine(commitResult: unknown, opts?: { throwError?: Error }) {
 }
 
 describe("context-engine commitOVSession()", () => {
+  it("skips commit when senderId is unavailable", async () => {
+    const { engine, client } = makeEngine({ status: "completed" });
+
+    const ok = await engine.commitOVSession({
+      sessionId: "test-session",
+      runtimeContext: { senderId: undefined },
+    });
+
+    expect(ok).toBe(false);
+    expect(client.commitSession).not.toHaveBeenCalled();
+  });
+
   it("returns true on successful commit", async () => {
     const { engine } = makeEngine({
       status: "completed",
@@ -180,6 +202,19 @@ describe("context-engine commitOVSession()", () => {
 });
 
 describe("context-engine compact()", () => {
+  it("skips compact when senderId is unavailable", async () => {
+    const { engine, client } = makeEngine({ status: "completed" });
+
+    const result = await engine.compact({
+      sessionId: "s1",
+      sessionFile: "",
+      runtimeContext: { senderId: undefined },
+    });
+
+    expect(result).toMatchObject({ ok: true, compacted: false, reason: "missing_sender_id" });
+    expect(client.commitSession).not.toHaveBeenCalled();
+  });
+
   it("returns compacted=false when the session matches bypassSessionPatterns", async () => {
     const cfg = memoryOpenVikingConfigSchema.parse({
       mode: "remote",

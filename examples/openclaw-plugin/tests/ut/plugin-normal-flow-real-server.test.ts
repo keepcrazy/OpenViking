@@ -217,12 +217,14 @@ describe("plugin normal flow with healthy backend", () => {
         sessionId: string;
         prompt?: string;
         messages: Array<{ role: string; content: string }>;
+        runtimeContext?: Record<string, unknown>;
       }) => Promise<{ messages: Array<{ role: string; content: unknown }> }>;
       afterTurn: (params: {
         sessionId: string;
         sessionFile: string;
         messages: Array<{ role: string; content: unknown; timestamp?: number }>;
         prePromptMessageCount: number;
+        runtimeContext?: Record<string, unknown>;
       }) => Promise<void>;
     };
 
@@ -230,6 +232,7 @@ describe("plugin normal flow with healthy backend", () => {
       sessionId: "session-normal",
       prompt: "what backend language should we use?",
       messages: [{ role: "user", content: "fallback" }],
+      runtimeContext: { senderId: "ou_test_sender" },
     });
 
     expect(assembled.messages[0]).toEqual({
@@ -247,6 +250,7 @@ describe("plugin normal flow with healthy backend", () => {
         ...(assembled.messages as Array<{ role: string; content: string }>),
         { role: "user", content: "what backend language should we use?" },
       ],
+      runtimeContext: { senderId: "ou_test_sender" },
     });
 
     const latest = transformed.messages.at(-1);
@@ -263,6 +267,7 @@ describe("plugin normal flow with healthy backend", () => {
         { role: "assistant", content: [{ type: "text", text: "Understood." }], timestamp: Date.parse("2026-04-07T08:00:01Z") },
       ],
       prePromptMessageCount: 0,
+      runtimeContext: { senderId: "ou_test_sender" },
     });
 
     expect(requests.some((entry) => entry.method === "GET" && entry.path === "/health")).toBe(true);

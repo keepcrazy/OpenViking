@@ -258,6 +258,20 @@ export class OpenVikingClient {
     return this.defaultAgentId;
   }
 
+  withUserId(userId: string): OpenVikingClient {
+    return new OpenVikingClient(
+      this.baseUrl,
+      this.apiKey,
+      this.defaultAgentId,
+      this.timeoutMs,
+      this.accountId,
+      userId,
+      this.routingDebugLog,
+      this.isolateUserScopeByAgent,
+      this.isolateAgentScopeByUser,
+    );
+  }
+
   private resolveEffectiveAgentId(agentId?: string): string {
     const explicit = agentId?.trim();
     if (explicit) {

@@ -68,6 +68,11 @@ function makeEngine(
     getClient,
     resolveAgentId,
   });
+  const assemble = engine.assemble.bind(engine);
+  engine.assemble = (params) => assemble({
+    ...params,
+    runtimeContext: { senderId: "ou_test_sender", ...(params.runtimeContext ?? {}) },
+  });
 
   return {
     engine,
@@ -83,6 +88,26 @@ function makeEngine(
 }
 
 describe("context-engine assemble()", () => {
+  it("passes through without OpenViking requests when senderId is unavailable", async () => {
+    const { engine, getClient } = makeEngine({
+      latest_archive_overview: "unused",
+      pre_archive_abstracts: [],
+      messages: [],
+      estimatedTokens: 0,
+      stats: makeStats(),
+    });
+    const messages = [{ role: "user", content: "hello" }];
+
+    const result = await engine.assemble({
+      sessionId: "s1",
+      messages,
+      runtimeContext: { senderId: undefined },
+    });
+
+    expect(getClient).not.toHaveBeenCalled();
+    expect(result.messages).toBe(messages);
+  });
+
   it("prepends auto-recall to the latest user message during transformContext", async () => {
     vi.stubGlobal(
       "fetch",

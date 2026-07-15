@@ -365,6 +365,28 @@ describe("OpenVikingClient tenant headers (advanced accountId / userId overrides
     expect(headers.get("X-OpenViking-User")).toBe("user-456");
   });
 
+  it("creates fresh sender-scoped clients without mutating the base client", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse({ status: "ok" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const baseClient = new OpenVikingClient(
+      "http://127.0.0.1:1933", "sk-test", "agent", 5000,
+      "acct-123", "legacy-user",
+    );
+    const first = baseClient.withUserId("ou_sender_a");
+    const second = baseClient.withUserId("ou_sender_a");
+
+    expect(first).not.toBe(second);
+    await first.healthCheck();
+    await baseClient.healthCheck();
+
+    const firstHeaders = new Headers((fetchMock.mock.calls[0]![1] as RequestInit).headers);
+    const baseHeaders = new Headers((fetchMock.mock.calls[1]![1] as RequestInit).headers);
+    expect(firstHeaders.get("X-OpenViking-Account")).toBe("acct-123");
+    expect(firstHeaders.get("X-OpenViking-User")).toBe("ou_sender_a");
+    expect(baseHeaders.get("X-OpenViking-User")).toBe("legacy-user");
+  });
+
   it("keeps api_key user-key flow free of explicit tenant overrides when accountId/userId are not configured", async () => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse({ status: "ok" }));
     vi.stubGlobal("fetch", fetchMock);

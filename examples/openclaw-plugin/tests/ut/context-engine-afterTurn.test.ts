@@ -66,6 +66,11 @@ function makeEngine(opts?: {
     getClient,
     resolveAgentId,
   });
+  const afterTurn = engine.afterTurn!.bind(engine);
+  engine.afterTurn = (params) => afterTurn({
+    ...params,
+    runtimeContext: { senderId: "ou_test_sender", ...(params.runtimeContext ?? {}) },
+  });
 
   return {
     engine,
@@ -80,6 +85,22 @@ function makeEngine(opts?: {
 }
 
 describe("context-engine afterTurn()", () => {
+  it("skips capture when senderId is unavailable", async () => {
+    const { engine, client, getClient, logger } = makeEngine();
+
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages: [{ role: "user", content: "hello" }],
+      prePromptMessageCount: 0,
+      runtimeContext: { senderId: undefined },
+    });
+
+    expect(getClient).not.toHaveBeenCalled();
+    expect(client.addSessionMessage).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("missing_sender_id"));
+  });
+
   it("does nothing when autoCapture is disabled", async () => {
     const { engine, client } = makeEngine({ autoCapture: false });
 

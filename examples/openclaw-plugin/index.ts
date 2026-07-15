@@ -60,6 +60,7 @@ type HookAgentContext = {
   agentId?: string;
   sessionId?: string;
   sessionKey?: string;
+  senderId?: string;
 };
 
 type SessionAgentLookup = {
@@ -103,6 +104,7 @@ type ToolContext = {
   sessionId?: string;
   agentId?: string;
   senderId?: string;
+  requesterSenderId?: string;
 };
 
 type PluginCommandContext = {
@@ -637,6 +639,8 @@ const contextEnginePlugin = {
     );
 
     const getClient = (): Promise<OpenVikingClient> => clientPromise;
+    const getUserClient = async (senderId: string): Promise<OpenVikingClient> =>
+      (await getClient()).withUserId(senderId);
 
     const isBypassedSession = (ctx?: {
       sessionId?: string;
@@ -653,6 +657,20 @@ const contextEnginePlugin = {
       details: {
         action: "bypassed",
         reason: "session_bypassed",
+        toolName,
+      },
+    });
+
+    const makeMissingSenderToolResult = (toolName: string) => ({
+      content: [
+        {
+          type: "text" as const,
+          text: `OpenViking skipped ${toolName} because the current senderId is unavailable.`,
+        },
+      ],
+      details: {
+        action: "skipped",
+        reason: "missing_sender_id",
         toolName,
       },
     });
@@ -816,13 +834,17 @@ const contextEnginePlugin = {
       return lines.join("\n");
     };
 
-    const memorySearchOpenViking = async (input: MemorySearchInput, agentId?: string) => {
+    const memorySearchOpenViking = async (
+      input: MemorySearchInput,
+      agentId?: string,
+      userClient?: OpenVikingClient,
+    ) => {
       const query = input.query.trim();
       if (!query) {
         throw new Error("query is required");
       }
       const limit = Math.max(1, Math.floor(input.limit ?? 10));
-      const client = await getClient();
+      const client = userClient ?? await getClient();
       let result: FindResult;
       if (input.uri) {
         result = await client.find(query, { targetUri: input.uri, limit }, agentId);
@@ -948,12 +970,16 @@ const contextEnginePlugin = {
           if (isBypassedSession(ctx)) {
             return makeBypassedToolResult("memory_search");
           }
+          const senderId = extractToolSenderId(ctx);
+          if (!senderId) {
+            return makeMissingSenderToolResult("memory_search");
+          }
           const session = resolvePluginSessionRouting(ctx);
           return memorySearchOpenViking({
             query: String((params as { query?: unknown }).query ?? ""),
             uri: typeof params.uri === "string" ? params.uri : undefined,
             limit: typeof params.limit === "number" ? params.limit : undefined,
-          }, session.agentId);
+          }, session.agentId, await getUserClient(senderId));
         },
       }),
       { name: "memory_search" },
@@ -1041,6 +1067,10 @@ const contextEnginePlugin = {
           if (isBypassedSession(ctx)) {
             return makeBypassedToolResult("memory_recall");
           }
+          const senderId = extractToolSenderId(ctx);
+          if (!senderId) {
+            return makeMissingSenderToolResult("memory_recall");
+          }
           const session = resolvePluginSessionRouting(ctx);
           const { query } = params as { query: string };
           const limit =
@@ -1057,7 +1087,7 @@ const contextEnginePlugin = {
               : undefined;
           const requestLimit = Math.max(limit * 4, 20);
 
-          const recallClient = await getClient();
+          const recallClient = await getUserClient(senderId);
           if (cfg.logFindRequests) {
             api.logger.info(
               `openviking: memory_recall X-OpenViking-Agent="${session.agentId}" ` +
@@ -1202,6 +1232,10 @@ const contextEnginePlugin = {
           if (isBypassedSession(ctx)) {
             return makeBypassedToolResult("memory_store");
           }
+          const senderId = extractToolSenderId(ctx);
+          if (!senderId) {
+            return makeMissingSenderToolResult("memory_store");
+          }
           const session = resolvePluginSessionRouting(ctx);
           const { text } = params as { text: string };
           const role =
@@ -1223,12 +1257,12 @@ const contextEnginePlugin = {
           let sessionId = explicitSessionId;
           let usedTempSession = false;
           try {
-            const c = await getClient();
+            const c = await getUserClient(senderId);
             if (!sessionId) {
               sessionId = `memory-store-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
               usedTempSession = true;
             }
-            const roleId = role === "user" ? toRoleId(extractToolSenderId(ctx)) : undefined;
+            const roleId = role === "user" ? toRoleId(senderId) : undefined;
             await c.addSessionMessage(
               sessionId,
               role,
@@ -1327,8 +1361,12 @@ const contextEnginePlugin = {
           if (isBypassedSession(ctx)) {
             return makeBypassedToolResult("memory_forget");
           }
+          const senderId = extractToolSenderId(ctx);
+          if (!senderId) {
+            return makeMissingSenderToolResult("memory_forget");
+          }
           const session = resolvePluginSessionRouting(ctx);
-          const client = await getClient();
+          const client = await getUserClient(senderId);
           const uri = (params as { uri?: string }).uri;
           if (uri) {
             if (!isMemoryUri(uri)) {
@@ -1444,6 +1482,10 @@ const contextEnginePlugin = {
           if (isBypassedSession(ctx)) {
             return makeBypassedToolResult("ov_archive_search");
           }
+          const senderId = extractToolSenderId(ctx);
+          if (!senderId) {
+            return makeMissingSenderToolResult("ov_archive_search");
+          }
           rememberSessionAgentId(ctx);
           const sessionId = ctx.sessionId ?? "";
           const sessionKey = ctx.sessionKey ?? "";
@@ -1468,7 +1510,7 @@ const contextEnginePlugin = {
           api.logger.info?.(`openviking: ov_archive_search query="${query}" escaped="${escapedQuery}" archive=${archiveId ?? "all"} session=${ovSessionId}`);
 
           try {
-            const client = await getClient();
+            const client = await getUserClient(senderId);
             const agentId = resolveAgentId(ctx.sessionId, ctx.sessionKey);
             const result = await client.grepSessionArchives(ovSessionId, escapedQuery, {
               archiveId,
@@ -1537,6 +1579,10 @@ const contextEnginePlugin = {
         if (isBypassedSession(ctx)) {
           return makeBypassedToolResult("ov_archive_expand");
         }
+        const senderId = extractToolSenderId(ctx);
+        if (!senderId) {
+          return makeMissingSenderToolResult("ov_archive_expand");
+        }
         const session = resolvePluginSessionRouting(ctx);
         const archiveId = String((params as { archiveId?: string }).archiveId ?? "").trim();
         const sessionId = session.sessionId ?? "";
@@ -1558,7 +1604,7 @@ const contextEnginePlugin = {
         }
 
         try {
-          const client = await getClient();
+          const client = await getUserClient(senderId);
           const detail = await client.getSessionArchive(
             session.ovSessionId,
             archiveId,
@@ -1621,6 +1667,10 @@ const contextEnginePlugin = {
           if (isBypassedSession(ctx)) {
             return makeBypassedToolResult("openviking_tool_result_read");
           }
+          const senderId = extractToolSenderId(ctx);
+          if (!senderId) {
+            return makeMissingSenderToolResult("openviking_tool_result_read");
+          }
           const session = resolvePluginSessionRouting(ctx);
           if (!session.ovSessionId) {
             return {
@@ -1657,7 +1707,7 @@ const contextEnginePlugin = {
           }
 
           try {
-            const client = await getClient();
+            const client = await getUserClient(senderId);
             const result = await client.readToolResult(
               session.ovSessionId,
               parsed.toolResultId,
@@ -1717,6 +1767,10 @@ const contextEnginePlugin = {
           if (isBypassedSession(ctx)) {
             return makeBypassedToolResult("openviking_tool_result_search");
           }
+          const senderId = extractToolSenderId(ctx);
+          if (!senderId) {
+            return makeMissingSenderToolResult("openviking_tool_result_search");
+          }
           const session = resolvePluginSessionRouting(ctx);
           if (!session.ovSessionId) {
             return {
@@ -1757,7 +1811,7 @@ const contextEnginePlugin = {
           );
 
           try {
-            const client = await getClient();
+            const client = await getUserClient(senderId);
             const result = await client.searchToolResult(
               session.ovSessionId,
               parsed.toolResultId,
@@ -1815,6 +1869,10 @@ const contextEnginePlugin = {
           if (isBypassedSession(ctx)) {
             return makeBypassedToolResult("openviking_tool_result_list");
           }
+          const senderId = extractToolSenderId(ctx);
+          if (!senderId) {
+            return makeMissingSenderToolResult("openviking_tool_result_list");
+          }
           const session = resolvePluginSessionRouting(ctx);
           if (!session.ovSessionId) {
             return {
@@ -1832,7 +1890,7 @@ const contextEnginePlugin = {
           const limit = getPositiveInteger(params.limit, 50);
 
           try {
-            const client = await getClient();
+            const client = await getUserClient(senderId);
             const result = await client.listToolResults(
               session.ovSessionId,
               { toolName, limit },
@@ -1929,6 +1987,7 @@ const contextEnginePlugin = {
           const ok = await contextEngineRef.commitOVSession({
             sessionId,
             sessionKey: ctx?.sessionKey,
+            runtimeContext: ctx?.senderId ? { senderId: ctx.senderId } : undefined,
           });
           if (ok) {
             api.logger.info(`openviking: committed OV session on reset for session=${sessionId}`);
@@ -1950,7 +2009,7 @@ const contextEnginePlugin = {
           version: "0.1.0",
           cfg,
           logger: api.logger,
-          getClient,
+          getClient: getUserClient,
           resolveAgentId,
           rememberSessionAgentId,
         });

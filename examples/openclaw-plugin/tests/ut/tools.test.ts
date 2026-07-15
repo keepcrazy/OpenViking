@@ -102,8 +102,12 @@ function setupPlugin(
     registerTool: vi.fn((toolOrFactory: unknown, opts?: unknown) => {
       if (typeof toolOrFactory === "function") {
         const factory = toolOrFactory as (ctx: Record<string, unknown>) => ToolDef;
-        const tool = factory({ sessionId: "test-session" });
-        factoryTools.set(tool.name, factory);
+        const withDefaultSender = (ctx: Record<string, unknown>) => factory({
+          senderId: "ou_test_sender",
+          ...ctx,
+        });
+        const tool = withDefaultSender({ sessionId: "test-session" });
+        factoryTools.set(tool.name, withDefaultSender);
         tools.set(tool.name, tool);
       } else {
         const tool = toolOrFactory as ToolDef;
@@ -177,6 +181,47 @@ describe("Tool: memory_recall (registration)", () => {
     expect(props).toHaveProperty("limit");
     expect(props).toHaveProperty("scoreThreshold");
     expect(props).toHaveProperty("targetUri");
+  });
+
+  it("routes different senders to different OpenViking user namespaces", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const requestUrl = new URL(url);
+      const headers = new Headers(init?.headers);
+      if (requestUrl.pathname === "/api/v1/system/status") {
+        return okResponse({ user: headers.get("X-OpenViking-User") });
+      }
+      if (requestUrl.pathname === "/api/v1/search/find") {
+        return okResponse({ memories: [], total: 0 });
+      }
+      return okResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { factoryTools, api } = setupPlugin();
+    contextEnginePlugin.register(api as any);
+    const factory = factoryTools.get("memory_recall")!;
+
+    await factory({ sessionId: "session-a", senderId: "ou_sender_a" })
+      .execute("tc-a", { query: "private fact" });
+    await factory({ sessionId: "session-b", senderId: "ou_sender_b" })
+      .execute("tc-b", { query: "private fact" });
+
+    const userSearches = fetchMock.mock.calls
+      .filter(([url]) => String(url).includes("/api/v1/search/find"))
+      .map(([, init]) => {
+        const request = init as RequestInit;
+        const body = JSON.parse(String(request.body));
+        return {
+          header: new Headers(request.headers).get("X-OpenViking-User"),
+          targetUri: body.target_uri,
+        };
+      })
+      .filter(({ targetUri }) => String(targetUri).startsWith("viking://user/"));
+
+    expect(userSearches).toEqual([
+      { header: "ou_sender_a", targetUri: "viking://user/ou_sender_a/memories" },
+      { header: "ou_sender_b", targetUri: "viking://user/ou_sender_b/memories" },
+    ]);
   });
 
   it("fills L2 content and filters explicit recall results like auto-recall", async () => {
@@ -336,7 +381,10 @@ describe("Tool: memory_store (behavioral)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const { factoryTools, api } = setupPlugin();
+    const { factoryTools, api } = setupPlugin(undefined, {
+      accountId: "acct-shared",
+      userId: "legacy-user",
+    });
     contextEnginePlugin.register(api as any);
     const factory = factoryTools.get("memory_store");
     expect(factory).toBeDefined();
@@ -354,9 +402,29 @@ describe("Tool: memory_store (behavioral)", () => {
     );
     expect(messageCall).toBeDefined();
     const [, init] = messageCall as [string, RequestInit];
+    const headers = new Headers(init.headers);
     const body = JSON.parse(String(init.body));
+    expect(headers.get("X-OpenViking-Account")).toBe("acct-shared");
+    expect(headers.get("X-OpenViking-User")).toBe("wx/user-01@abc");
     expect(body.role).toBe("user");
     expect(body.role_id).toBe("wx_user-01_abc");
+  });
+
+  it("skips writes without senderId and does not call OpenViking", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { factoryTools, api } = setupPlugin();
+    contextEnginePlugin.register(api as any);
+    const tool = factoryTools.get("memory_store")!({
+      sessionId: "runtime-session",
+      senderId: undefined,
+    });
+
+    const result = await tool.execute("tc-memory-store", { text: "must not be stored" }) as ToolResult;
+
+    expect(result.details).toMatchObject({ action: "skipped", reason: "missing_sender_id" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("uses a temporary session by default instead of the current tool session", async () => {
