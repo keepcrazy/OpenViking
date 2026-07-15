@@ -27,6 +27,11 @@ type AgentMessage = {
 
 type ExtractedTurnMessage = ReturnType<typeof extractNewTurnMessages>["messages"][number];
 
+type CaptureCursor = {
+  messageCount: number;
+  anchors: Array<{ index: number; fingerprint: string }>;
+};
+
 type ContextEngineInfo = {
   id: string;
   name: string;
@@ -145,6 +150,39 @@ const ARCHIVE_BUDGET_CAP = 8_000;
 const RESERVED_MIN = 20_000;
 const RESERVED_RATIO = 0.15;
 const ARCHIVE_INDEX_TRIM_LIMIT = 10;
+const CAPTURE_CURSOR_ANCHOR_COUNT = 3;
+const MAX_CAPTURE_CURSORS = 1_000;
+
+function captureMessageFingerprint(message: AgentMessage): string {
+  const raw = message as Record<string, unknown>;
+  return createHash("sha256")
+    .update(JSON.stringify({
+      role: raw.role ?? null,
+      content: raw.content ?? null,
+      timestamp: raw.timestamp ?? null,
+      toolCallId: raw.toolCallId ?? null,
+      toolUseId: raw.toolUseId ?? null,
+      toolName: raw.toolName ?? null,
+    }))
+    .digest("hex");
+}
+
+function buildCaptureCursor(messages: AgentMessage[]): CaptureCursor {
+  const firstAnchor = Math.max(0, messages.length - CAPTURE_CURSOR_ANCHOR_COUNT);
+  return {
+    messageCount: messages.length,
+    anchors: messages.slice(firstAnchor).map((message, offset) => ({
+      index: firstAnchor + offset,
+      fingerprint: captureMessageFingerprint(message),
+    })),
+  };
+}
+
+function captureCursorMatches(cursor: CaptureCursor, messages: AgentMessage[]): boolean {
+  return cursor.messageCount <= messages.length && cursor.anchors.every(
+    ({ index, fingerprint }) => captureMessageFingerprint(messages[index]) === fingerprint,
+  );
+}
 
 function allocateContextBudget(totalBudget: number, instructionTokens = 0): ContextBudgets {
   const reserveFloor = totalBudget >= RESERVED_MIN * 2 ? RESERVED_MIN : 0;
@@ -900,11 +938,45 @@ export function createMemoryOpenVikingContextEngine(params: {
 
   const diagEnabled = cfg.emitStandardDiagnostics;
   const bypassSessionPatterns = compileSessionPatterns(cfg.bypassSessionPatterns);
+  // OpenClaw can call afterTurn for each tool-loop delta and again for the final turn snapshot.
+  // Track the verified transcript prefix so the final callback only appends the unseen suffix.
+  const captureCursors = new Map<string, CaptureCursor>();
   const diag = (stage: string, sessionId: string, data: Record<string, unknown>) =>
     emitDiag(logger, stage, sessionId, data, diagEnabled);
 
   const isBypassedSession = (params: { sessionId?: string; sessionKey?: string }): boolean =>
     shouldBypassSession(params, bypassSessionPatterns);
+
+  function captureCursorKey(senderId: string, agentId: string, ovSessionId: string): string {
+    return JSON.stringify([senderId, agentId, ovSessionId]);
+  }
+
+  function resolveCaptureStart(
+    key: string,
+    messages: AgentMessage[],
+    requestedStart: number,
+  ): number {
+    const cursor = captureCursors.get(key);
+    if (!cursor) {
+      return requestedStart;
+    }
+    if (!captureCursorMatches(cursor, messages)) {
+      captureCursors.delete(key);
+      return requestedStart;
+    }
+    return Math.max(requestedStart, cursor.messageCount);
+  }
+
+  function updateCaptureCursor(key: string, messages: AgentMessage[]): void {
+    captureCursors.delete(key);
+    captureCursors.set(key, buildCaptureCursor(messages));
+    if (captureCursors.size > MAX_CAPTURE_CURSORS) {
+      const oldestKey = captureCursors.keys().next().value;
+      if (oldestKey !== undefined) {
+        captureCursors.delete(oldestKey);
+      }
+    }
+  }
 
   async function doCommitOVSession(params: {
     sessionId: string;
@@ -1332,27 +1404,31 @@ export function createMemoryOpenVikingContextEngine(params: {
           return;
         }
 
-        const start =
+        const requestedStart =
           typeof afterTurnParams.prePromptMessageCount === "number" &&
           afterTurnParams.prePromptMessageCount >= 0
             ? afterTurnParams.prePromptMessageCount
             : 0;
+        const cursorKey = captureCursorKey(sender.senderId, agentId, OVSessionId);
+        const captureStart = resolveCaptureStart(cursorKey, messages, requestedStart);
 
-        const { messages: extractedMessagesRaw, newCount } = extractNewTurnMessages(messages, start);
+        const { messages: extractedMessagesRaw, newCount } = extractNewTurnMessages(messages, captureStart);
         const extractedMessages = coalesceConsecutiveToolMessages(extractedMessagesRaw);
 
         if (extractedMessages.length === 0) {
+          updateCaptureCursor(cursorKey, messages);
           diag("afterTurn_skip", OVSessionId, {
             reason: "no_new_turn_messages",
             totalMessages: messages.length,
-            prePromptMessageCount: start,
+            prePromptMessageCount: requestedStart,
+            captureStart,
             senderIdFound: sender.found,
             senderId: sender.senderId ?? null,
           });
           return;
         }
 
-        const turnMessages = messages.slice(start) as AgentMessage[];
+        const turnMessages = messages.slice(captureStart) as AgentMessage[];
         const newMessages = turnMessages.filter((m: any) => {
           const r = (m as Record<string, unknown>).role as string;
           return r === "user" || r === "assistant";
@@ -1363,7 +1439,9 @@ export function createMemoryOpenVikingContextEngine(params: {
         diag("afterTurn_entry", OVSessionId, {
           totalMessages: messages.length,
           newMessageCount: newCount,
-          prePromptMessageCount: start,
+          prePromptMessageCount: requestedStart,
+          captureStart,
+          skippedPreviouslyCaptured: captureStart - requestedStart,
           newTurnTokens,
           senderIdFound: sender.found,
           senderId: sender.senderId ?? null,
@@ -1406,6 +1484,8 @@ export function createMemoryOpenVikingContextEngine(params: {
             );
           }
         }
+
+        updateCaptureCursor(cursorKey, messages);
 
         const session = await client.getSession(OVSessionId, agentId);
         const pendingTokens = session.pending_tokens ?? 0;

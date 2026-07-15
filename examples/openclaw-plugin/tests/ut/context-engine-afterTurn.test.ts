@@ -197,6 +197,171 @@ describe("context-engine afterTurn()", () => {
     expect(client.addSessionMessage.mock.calls[1][2][0].text).toContain("hi there");
   });
 
+  it("does not capture the user message again during final afterTurn", async () => {
+    const { engine, client } = makeEngine();
+    const history = { role: "assistant", content: "previous reply" };
+    const user = { role: "user", content: "current question" };
+    const assistant = { role: "assistant", content: "current answer" };
+
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages: [history, user],
+      prePromptMessageCount: 1,
+    });
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages: [history, user, assistant],
+      prePromptMessageCount: 1,
+    });
+
+    expect(client.addSessionMessage).toHaveBeenCalledTimes(2);
+    expect(client.addSessionMessage.mock.calls[0][1]).toBe("user");
+    expect(client.addSessionMessage.mock.calls[0][2][0].text).toBe("current question");
+    expect(client.addSessionMessage.mock.calls[1][1]).toBe("assistant");
+    expect(client.addSessionMessage.mock.calls[1][2][0].text).toBe("current answer");
+  });
+
+  it("ignores an identical repeated afterTurn callback", async () => {
+    const { engine, client } = makeEngine();
+    const messages = [{ role: "user", content: "current question" }];
+
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages,
+      prePromptMessageCount: 0,
+    });
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages,
+      prePromptMessageCount: 0,
+    });
+
+    expect(client.addSessionMessage).toHaveBeenCalledTimes(1);
+    expect(client.getSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("captures each tool-loop message only once across repeated afterTurn calls", async () => {
+    const { engine, client } = makeEngine();
+    const user = { role: "user", content: "inspect the workspace" };
+    const toolCall = {
+      role: "assistant",
+      content: [{ type: "toolUse", id: "call-1", name: "read", input: { path: "a.txt" } }],
+    };
+    const toolResult = {
+      role: "toolResult",
+      toolCallId: "call-1",
+      toolName: "read",
+      content: "file contents",
+    };
+    const assistant = { role: "assistant", content: "done" };
+
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages: [user],
+      prePromptMessageCount: 0,
+    });
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages: [user, toolCall, toolResult],
+      prePromptMessageCount: 1,
+    });
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages: [user, toolCall, toolResult, assistant],
+      prePromptMessageCount: 0,
+    });
+
+    expect(client.addSessionMessage).toHaveBeenCalledTimes(4);
+    expect(client.addSessionMessage.mock.calls.map((call) => call[1])).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+  });
+
+  it("captures a repeated user text in a later transcript position", async () => {
+    const { engine, client } = makeEngine();
+    const firstUser = { role: "user", content: "repeat this" };
+    const firstAssistant = { role: "assistant", content: "first reply" };
+    const secondUser = { role: "user", content: "repeat this" };
+
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages: [firstUser, firstAssistant],
+      prePromptMessageCount: 0,
+    });
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages: [firstUser, firstAssistant, secondUser],
+      prePromptMessageCount: 2,
+    });
+
+    expect(client.addSessionMessage).toHaveBeenCalledTimes(3);
+    expect(client.addSessionMessage.mock.calls[2][2][0].text).toBe("repeat this");
+  });
+
+  it("isolates capture cursors by sender", async () => {
+    const { engine, client } = makeEngine();
+    const messages = [{ role: "user", content: "shared message" }];
+
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages,
+      prePromptMessageCount: 0,
+      runtimeContext: { senderId: "sender-a" },
+    });
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages,
+      prePromptMessageCount: 0,
+      runtimeContext: { senderId: "sender-b" },
+    });
+
+    expect(client.addSessionMessage).toHaveBeenCalledTimes(2);
+    expect(client.addSessionMessage.mock.calls.map((call) => call[5])).toEqual([
+      "sender-a",
+      "sender-b",
+    ]);
+  });
+
+  it("resets the capture cursor when the transcript is rewritten", async () => {
+    const { engine, client } = makeEngine();
+
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages: [
+        { role: "assistant", content: "old history" },
+        { role: "user", content: "first question" },
+      ],
+      prePromptMessageCount: 1,
+    });
+    await engine.afterTurn!({
+      sessionId: "s1",
+      sessionFile: "",
+      messages: [
+        { role: "assistant", content: "rewritten history" },
+        { role: "user", content: "new question" },
+      ],
+      prePromptMessageCount: 1,
+    });
+
+    expect(client.addSessionMessage).toHaveBeenCalledTimes(2);
+    expect(client.addSessionMessage.mock.calls[1][2][0].text).toBe("new question");
+  });
+
   it("passes the latest non-system message timestamp to addSessionMessage as ISO string", async () => {
     const { engine, client } = makeEngine();
 
