@@ -5,6 +5,7 @@
 
 import asyncio
 import zipfile
+from unittest.mock import AsyncMock
 
 import httpx
 
@@ -33,6 +34,58 @@ async def test_add_resource_success(
     assert "telemetry" not in body
     assert "root_uri" in body["result"]
     assert body["result"]["root_uri"].startswith("viking://")
+    assert body["result"]["scope"] == "account"
+
+
+async def test_add_resource_agent_scope_is_forwarded_and_initialized(
+    client: httpx.AsyncClient,
+    service,
+    monkeypatch,
+):
+    initialize = AsyncMock(return_value=1)
+    add = AsyncMock(
+        return_value={
+            "status": "success",
+            "root_uri": "viking://agent/test-agent/resources/private-doc",
+            "scope": "agent",
+        }
+    )
+    monkeypatch.setattr(service, "initialize_agent_directories", initialize)
+    monkeypatch.setattr(service.resources, "add_resource", add)
+
+    resp = await client.post(
+        "/api/v1/resources",
+        json={
+            "path": "https://example.com/private.md",
+            "scope": "agent",
+        },
+    )
+
+    assert resp.status_code == 200
+    initialize.assert_awaited_once()
+    assert add.await_args.kwargs["scope"] == "agent"
+    assert resp.json()["result"]["scope"] == "agent"
+
+
+async def test_add_resource_agent_scope_uses_agent_resource_root(
+    client: httpx.AsyncClient,
+    sample_markdown_file,
+    upload_temp_dir,
+):
+    resp = await client.post(
+        "/api/v1/resources",
+        json={
+            "temp_file_id": sample_markdown_file.name,
+            "scope": "agent",
+            "wait": False,
+        },
+    )
+
+    assert resp.status_code == 200
+    result = resp.json()["result"]
+    assert result["scope"] == "agent"
+    assert result["root_uri"].startswith("viking://agent/")
+    assert "/resources/" in result["root_uri"]
 
 
 async def test_add_resource_with_wait(

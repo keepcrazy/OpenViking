@@ -5,6 +5,7 @@
 
 import pytest
 
+from openviking.core.namespace import canonical_agent_resources_root
 from openviking.retrieve.hierarchical_retriever import HierarchicalRetriever
 from openviking.server.identity import RequestContext, Role
 from openviking_cli.retrieve.types import ContextType, TypedQuery
@@ -69,6 +70,16 @@ class DummyStorage:
             }
         )
         return []
+
+
+def test_resource_roots_include_account_and_current_agent():
+    retriever = HierarchicalRetriever(storage=DummyStorage(), embedder=None, rerank_config=None)
+    ctx = RequestContext(user=UserIdentifier("acc1", "user1", "agent1"), role=Role.USER)
+
+    assert retriever._get_root_uris_for_type(ContextType.RESOURCE, ctx) == [
+        "viking://resources",
+        canonical_agent_resources_root(ctx),
+    ]
 
 
 @pytest.mark.asyncio

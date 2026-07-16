@@ -11,6 +11,11 @@ import json
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from openviking.core.namespace import (
+    NamespaceShapeError,
+    canonical_agent_resources_root,
+    canonicalize_uri,
+)
 from openviking.core.path_variables import resolve_path_variables
 from openviking.core.uri_validation import validate_optional_viking_uri
 from openviking.server.identity import RequestContext
@@ -109,6 +114,7 @@ class ResourceService:
         ctx: RequestContext,
         to: Optional[str] = None,
         parent: Optional[str] = None,
+        scope: str = "account",
         reason: str = "",
         instruction: str = "",
         wait: bool = False,
@@ -121,12 +127,14 @@ class ResourceService:
         enforce_public_remote_targets: bool = False,
         **kwargs,
     ) -> Dict[str, Any]:
-        """Add resource to OpenViking (only supports resources scope).
+        """Add a resource to the account-shared or current-agent resource scope.
 
         Args:
             path: Resource path (local file or URL)
             to: Target URI (e.g., "viking://resources/my_resource")
             parent: Parent URI under which the resource will be stored
+            scope: Resource ownership scope. ``account`` is the compatibility default;
+                ``agent`` stores under the current Agent's isolated resource root.
             reason: Reason for adding the resource
             instruction: Processing instruction for semantic extraction
             wait: Whether to wait for semantic extraction and vectorization to complete
@@ -155,7 +163,7 @@ class ResourceService:
 
         Raises:
             ConflictError: If the target URI already has an active watch task
-            InvalidArgumentError: If the URI scope is not 'resources'
+            InvalidArgumentError: If scope or the requested target URI is invalid
         """
         self._ensure_initialized()
         request_start = time.perf_counter()
@@ -176,22 +184,35 @@ class ResourceService:
         telemetry.set("resource.flags.watch_enabled", watch_enabled)
 
         try:
+            if scope not in {"account", "agent"}:
+                raise InvalidArgumentError("scope must be either 'account' or 'agent'")
+            resource_root = (
+                canonical_agent_resources_root(ctx) if scope == "agent" else "viking://resources"
+            )
+
             # Resolve path variables before validation
             if to:
                 to = resolve_path_variables(to)
             if parent:
                 parent = resolve_path_variables(parent)
 
-            to = validate_optional_viking_uri(
-                to,
-                field_name="to",
-                allowed_scopes={"resources"},
-            )
+            allowed_scopes = {"agent"} if scope == "agent" else {"resources"}
+            to = validate_optional_viking_uri(to, field_name="to", allowed_scopes=allowed_scopes)
             parent = validate_optional_viking_uri(
-                parent,
-                field_name="parent",
-                allowed_scopes={"resources"},
+                parent, field_name="parent", allowed_scopes=allowed_scopes
             )
+            if scope == "agent":
+                try:
+                    to = canonicalize_uri(to, ctx=ctx) if to else ""
+                    parent = canonicalize_uri(parent, ctx=ctx) if parent else ""
+                except NamespaceShapeError as exc:
+                    raise InvalidArgumentError(str(exc)) from exc
+                for field_name, uri in (("to", to), ("parent", parent)):
+                    if uri and uri != resource_root and not uri.startswith(f"{resource_root}/"):
+                        raise InvalidArgumentError(
+                            f"{field_name} must be inside the current Agent resource scope: "
+                            f"{resource_root}"
+                        )
             if watch_manager and not skip_watch_management and watch_interval > 0 and not to:
                 raise InvalidArgumentError(
                     "watch_interval > 0 requires 'to' to be specified (target URI to watch)"
@@ -206,6 +227,7 @@ class ResourceService:
                 reason=reason,
                 instruction=instruction,
                 scope="resources",
+                resource_root=resource_root,
                 to=to,
                 parent=parent,
                 build_index=build_index,
@@ -213,6 +235,7 @@ class ResourceService:
                 allow_local_path_resolution=allow_local_path_resolution,
                 **kwargs,
             )
+            result["scope"] = scope
 
             if result.get("status") == "error":
                 return result
@@ -271,6 +294,7 @@ class ResourceService:
                                 watch_interval=watch_interval,
                                 build_index=build_index,
                                 summarize=summarize,
+                                scope=scope,
                                 processor_kwargs=processor_kwargs,
                                 ctx=ctx,
                             )
@@ -382,6 +406,7 @@ class ResourceService:
         watch_interval: float,
         build_index: bool,
         summarize: bool,
+        scope: str,
         processor_kwargs: Dict[str, Any],
         ctx: RequestContext,
     ) -> None:
@@ -431,6 +456,8 @@ class ResourceService:
                 watch_interval=watch_interval,
                 build_index=build_index,
                 summarize=summarize,
+                scope=scope,
+                namespace_policy=ctx.namespace_policy.to_dict(),
                 processor_kwargs=processor_kwargs,
                 is_active=True,
             )
@@ -451,6 +478,8 @@ class ResourceService:
                 watch_interval=watch_interval,
                 build_index=build_index,
                 summarize=summarize,
+                scope=scope,
+                namespace_policy=ctx.namespace_policy.to_dict(),
                 processor_kwargs=processor_kwargs,
             )
             logger.info(f"[ResourceService] Created watch task {task.task_id} for {to_uri}")

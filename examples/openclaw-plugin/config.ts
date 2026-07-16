@@ -404,7 +404,7 @@ export const memoryOpenVikingConfigSchema = {
     },
     recallResources: {
       label: "Recall Resources",
-      help: "Include resources (viking://resources) in auto-recall and default memory_recall search. Enables account-level shared knowledge retrieval.",
+      help: "Include account-shared and current-agent resources in auto-recall and default memory_recall search.",
       advanced: true,
     },
     recallLimit: {

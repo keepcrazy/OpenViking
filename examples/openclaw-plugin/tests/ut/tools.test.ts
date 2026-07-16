@@ -810,6 +810,7 @@ describe("Tool: memory_search (behavioral)", () => {
       .filter((call) => String(call[0]).endsWith("/api/v1/search/find"))
       .map((call) => JSON.parse(String((call[1] as RequestInit).body)));
     expect(findBodies.some((body) => body.target_uri === "viking://resources")).toBe(true);
+    expect(findBodies.some((body) => String(body.target_uri).startsWith("viking://agent/") && String(body.target_uri).endsWith("/resources"))).toBe(true);
     expect(findBodies.some((body) => String(body.target_uri).startsWith("viking://agent/") && String(body.target_uri).endsWith("/skills"))).toBe(true);
   });
 
@@ -926,10 +927,24 @@ describe("OpenViking import command parsing", () => {
     ).toMatchObject({
       source: "./README.md",
       to: "viking://resources/readme",
+      scope: "agent",
       reason: "project docs",
       instruction: "summarize APIs",
       wait: true,
     });
+  });
+
+  it("parses explicit account resource scope", () => {
+    expect(parseAddResourceCommandArgs("./README.md --scope account")).toMatchObject({
+      source: "./README.md",
+      scope: "account",
+    });
+  });
+
+  it("rejects an invalid resource scope", () => {
+    expect(() => parseAddResourceCommandArgs("./README.md --scope global")).toThrow(
+      "--scope must be either",
+    );
   });
 
   it("keeps unquoted space-containing import sources intact", () => {
@@ -1100,6 +1115,7 @@ describe("Plugin registration", () => {
     await tool.execute("tc-add-resource", {
       source: "https://example.com/docs",
       to: "viking://resources/shared-docs",
+      scope: "account",
       wait: true,
     });
 
@@ -1107,6 +1123,7 @@ describe("Plugin registration", () => {
     const headers = new Headers(init.headers);
     expect(headers.get("X-OpenViking-Account")).toBe("acct-shared");
     expect(headers.get("X-OpenViking-User")).toBe("alice");
+    expect(JSON.parse(String(init.body))).toMatchObject({ scope: "account" });
   });
 
   it("add_resource uploads local media attachment paths as resources", async () => {
@@ -1133,6 +1150,9 @@ describe("Plugin registration", () => {
       expect(result.content[0]!.text).toContain("Imported OpenViking resource");
       expect(fetchMock.mock.calls[0]![0]).toBe("http://127.0.0.1:1933/api/v1/resources/temp_upload");
       expect(fetchMock.mock.calls[1]![0]).toBe("http://127.0.0.1:1933/api/v1/resources");
+      expect(JSON.parse(String((fetchMock.mock.calls[1]![1] as RequestInit).body))).toMatchObject({
+        scope: "agent",
+      });
       const body = JSON.parse(String(fetchMock.mock.calls[1]![1]!.body));
       expect(body).toMatchObject({
         temp_file_id: "upload_sheet.xlsx",

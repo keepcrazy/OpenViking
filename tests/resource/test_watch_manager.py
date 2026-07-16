@@ -94,6 +94,8 @@ class TestWatchTask:
         assert task.parent_uri is None
         assert task.reason == ""
         assert task.instruction == ""
+        assert task.scope == "account"
+        assert task.namespace_policy == {}
         assert task.watch_interval == 60.0
         assert task.is_active is True
         assert task.created_at is not None
@@ -145,6 +147,8 @@ class TestWatchTask:
         assert data["to_uri"] == "viking://test"
         assert data["created_at"] == now.isoformat()
         assert data["is_active"] is True
+        assert data["scope"] == "account"
+        assert data["namespace_policy"] == {}
 
     def test_from_dict(self):
         """Test creating task from dictionary."""
@@ -172,6 +176,7 @@ class TestWatchTask:
         assert task.is_active is False
         assert task.created_at == now
         assert task.last_execution_time == now
+        assert task.scope == "account"
 
     def test_calculate_next_execution_time(self):
         """Test calculating next execution time."""

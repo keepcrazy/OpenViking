@@ -90,6 +90,7 @@ describe("OpenVikingClient resource and skill import", () => {
     const result = await client.addResource({
       pathOrUrl: "https://example.com/docs",
       to: "viking://resources/site",
+      scope: "account",
       wait: true,
     });
 
@@ -99,6 +100,7 @@ describe("OpenVikingClient resource and skill import", () => {
     expect(JSON.parse(String(init.body))).toMatchObject({
       path: "https://example.com/docs",
       to: "viking://resources/site",
+      scope: "account",
       wait: true,
     });
   });
@@ -126,6 +128,7 @@ describe("OpenVikingClient resource and skill import", () => {
     expect((fetchMock.mock.calls[0]![1] as RequestInit).body).toBeInstanceOf(FormData);
     expect(JSON.parse(String((fetchMock.mock.calls[1]![1] as RequestInit).body))).toMatchObject({
       temp_file_id: "upload_resource.md",
+      scope: "agent",
       wait: true,
     });
   });

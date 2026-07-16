@@ -3,8 +3,11 @@
 """Tests for shared Viking URI namespace/content classification."""
 
 from openviking.core.namespace import (
+    canonical_agent_resources_root,
+    canonicalize_uri,
     classify_uri,
     context_type_for_uri,
+    is_accessible,
     owner_space_for_uri,
 )
 from openviking.server.identity import AccountNamespacePolicy, RequestContext, Role
@@ -57,3 +60,37 @@ def test_owner_space_for_uri_respects_namespace_policy():
         "planner/user/alice"
     )
     assert owner_space_for_uri("viking://resources/readme.md", ctx) == ""
+
+
+def test_agent_resource_shorthand_uses_current_agent_namespace():
+    ctx = RequestContext(
+        user=UserIdentifier(account_id="acct", user_id="alice", agent_id="planner"),
+        role=Role.USER,
+        namespace_policy=AccountNamespacePolicy(isolate_agent_scope_by_user=True),
+    )
+
+    assert canonical_agent_resources_root(ctx) == (
+        "viking://agent/planner/user/alice/resources"
+    )
+    assert canonicalize_uri("viking://agent/resources/project/readme.md", ctx=ctx) == (
+        "viking://agent/planner/user/alice/resources/project/readme.md"
+    )
+    assert context_type_for_uri(canonical_agent_resources_root(ctx)) == "resource"
+
+
+def test_agent_resources_are_not_accessible_to_another_agent():
+    planner_ctx = RequestContext(
+        user=UserIdentifier(account_id="acct", user_id="alice", agent_id="planner"),
+        role=Role.USER,
+        namespace_policy=AccountNamespacePolicy(isolate_agent_scope_by_user=False),
+    )
+    writer_ctx = RequestContext(
+        user=UserIdentifier(account_id="acct", user_id="alice", agent_id="writer"),
+        role=Role.USER,
+        namespace_policy=AccountNamespacePolicy(isolate_agent_scope_by_user=False),
+    )
+    planner_resource = "viking://agent/planner/resources/private.md"
+
+    assert is_accessible(planner_resource, planner_ctx)
+    assert not is_accessible(planner_resource, writer_ctx)
+    assert is_accessible("viking://resources/shared.md", writer_ctx)

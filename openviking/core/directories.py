@@ -120,6 +120,11 @@ PRESET_DIRECTORIES: Dict[str, DirectoryDefinition] = {
                 "Examples: planner agent has specific planning process requirements, executor agent has execution standards, etc.",
             ),
             DirectoryDefinition(
+                path="resources",
+                abstract="Agent-private resource storage. Contains knowledge and files available only to this Agent.",
+                overview="Use this directory for resources specific to the current Agent. Resources here are isolated from other Agents while account resources remain shared.",
+            ),
+            DirectoryDefinition(
                 path="skills",
                 abstract="Agent's skill registry. Uses Claude Skills protocol format, flat storage of callable skill definitions.",
                 overview="Access when Agent needs to execute specific tasks. Skills categorized by tags, "

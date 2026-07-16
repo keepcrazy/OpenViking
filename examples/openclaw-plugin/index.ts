@@ -10,6 +10,7 @@ import type {
   AddSkillResult,
   FindResult,
   FindResultItem,
+  ResourceScope,
   CommitSessionResult,
   OVMessage,
 } from "./client.js";
@@ -133,6 +134,7 @@ type AddResourceToolInput = {
   source?: string;
   to?: string;
   parent?: string;
+  scope?: ResourceScope;
   reason?: string;
   instruction?: string;
   wait?: boolean;
@@ -372,17 +374,22 @@ export function parseAddResourceCommandArgs(args: string): AddResourceToolInput 
   const source =
     parsed.positionals.length <= 1 ? parsed.positionals[0] : parsed.positionals.join(" ").trim();
   if (!source) {
-    throw new Error("Usage: /add-resource <source> [--to URI] [--parent URI] [--reason TEXT] [--instruction TEXT] [--wait] [--timeout SEC]");
+    throw new Error("Usage: /add-resource <source> [--scope agent|account] [--to URI] [--parent URI] [--reason TEXT] [--instruction TEXT] [--wait] [--timeout SEC]");
   }
   const to = getStringFlag(parsed.flags, "to");
   const parent = getStringFlag(parsed.flags, "parent");
   if (to && parent) {
     throw new Error("Cannot specify both --to and --parent.");
   }
+  const rawScope = getStringFlag(parsed.flags, "scope");
+  if (rawScope && rawScope !== "account" && rawScope !== "agent") {
+    throw new Error("--scope must be either 'agent' or 'account'.");
+  }
   return {
     source,
     to,
     parent,
+    scope: (rawScope as ResourceScope | undefined) ?? "agent",
     reason: getStringFlag(parsed.flags, "reason"),
     instruction: getStringFlag(parsed.flags, "instruction"),
     wait: getBoolFlag(parsed.flags, "wait"),
@@ -705,8 +712,9 @@ const contextEnginePlugin = {
 
     const formatResourceImportText = (result: AddResourceResult): string => {
       const root = result.root_uri ? ` ${result.root_uri}` : "";
+      const scope = result.scope ? ` [scope=${result.scope}]` : "";
       const warnings = result.warnings?.length ? ` Warnings: ${result.warnings.join("; ")}` : "";
-      return `Imported OpenViking resource.${root}${warnings}`.trim();
+      return `Imported OpenViking resource${scope}.${root}${warnings}`.trim();
     };
 
     const formatSkillImportText = (result: AddSkillResult): string => {
@@ -744,6 +752,7 @@ const contextEnginePlugin = {
         pathOrUrl: input.source ?? "",
         to: input.to,
         parent: input.parent,
+        scope: input.scope,
         reason: input.reason,
         instruction: input.instruction,
         wait: input.wait,
@@ -849,31 +858,23 @@ const contextEnginePlugin = {
       if (input.uri) {
         result = await client.find(query, { targetUri: input.uri, limit }, agentId);
       } else {
-        const [resourcesSettled, skillsSettled] = await Promise.allSettled([
+        const settled = await Promise.allSettled([
           client.find(query, { targetUri: "viking://resources", limit }, agentId),
+          client.find(query, { targetUri: "viking://agent/resources", limit }, agentId),
           client.find(query, { targetUri: "viking://agent/skills", limit }, agentId),
         ]);
-        const successful: FindResult[] = [];
-        if (resourcesSettled.status === "fulfilled") {
-          successful.push(resourcesSettled.value);
-        }
-        if (skillsSettled.status === "fulfilled") {
-          successful.push(skillsSettled.value);
-        }
+        const successful = settled.flatMap((item) =>
+          item.status === "fulfilled" ? [item.value] : [],
+        );
         if (successful.length === 0) {
-          const firstError =
-            resourcesSettled.status === "rejected"
-              ? resourcesSettled.reason
-              : skillsSettled.status === "rejected"
-                ? skillsSettled.reason
-                : "Both searches failed";
-          throw firstError instanceof Error ? firstError : new Error(String(firstError));
+          const firstError = settled.find((item) => item.status === "rejected");
+          const reason = firstError?.status === "rejected" ? firstError.reason : "All searches failed";
+          throw reason instanceof Error ? reason : new Error(String(reason));
         }
-        if (resourcesSettled.status === "rejected") {
-          api.logger.warn?.(`openviking: resource search failed: ${String(resourcesSettled.reason)}`);
-        }
-        if (skillsSettled.status === "rejected") {
-          api.logger.warn?.(`openviking: skill search failed: ${String(skillsSettled.reason)}`);
+        for (const failed of settled) {
+          if (failed.status === "rejected") {
+            api.logger.warn?.(`openviking: scoped search failed: ${String(failed.reason)}`);
+          }
         }
         result = mergeFindResults(successful);
       }
@@ -897,11 +898,16 @@ const contextEnginePlugin = {
         label: "Add Resource (OpenViking)",
         description:
           "Use only when the user explicitly asks to import, add, upload, save, or index a document, directory, URL, Git repository, or OpenClaw media attachment into OpenViking resources. " +
-          "For a '[media attached: /path ...]' document, set source to that exact local media path. Do not invent OpenViking upload REST endpoints.",
+          "For a '[media attached: /path ...]' document, set source to that exact local media path. " +
+          "Use scope=account only for explicitly shared team knowledge; use scope=agent for task-specific or ambiguous resources (the default). Do not invent OpenViking upload REST endpoints.",
         parameters: Type.Object({
           source: Type.String({ description: "Local path, OpenClaw media attachment path, directory path, public URL, or Git URL" }),
-          to: Type.Optional(Type.String({ description: "Exact target URI, e.g. viking://resources/project-docs" })),
-          parent: Type.Optional(Type.String({ description: "Parent URI under viking://resources" })),
+          to: Type.Optional(Type.String({ description: "Exact target URI inside the selected scope" })),
+          parent: Type.Optional(Type.String({ description: "Parent URI inside the selected scope" })),
+          scope: Type.Optional(Type.Union([
+            Type.Literal("agent"),
+            Type.Literal("account"),
+          ], { description: "Ownership scope. Use agent for task-specific or ambiguous resources; use account only for shared team knowledge. Defaults to agent." })),
           reason: Type.Optional(Type.String({ description: "Reason or note for adding this resource" })),
           instruction: Type.Optional(Type.String({ description: "Processing instruction for semantic extraction" })),
           wait: Type.Optional(Type.Boolean({ description: "Wait for processing to complete" })),
@@ -916,6 +922,7 @@ const contextEnginePlugin = {
             source: typeof params.source === "string" ? params.source : undefined,
             to: typeof params.to === "string" ? params.to : undefined,
             parent: typeof params.parent === "string" ? params.parent : undefined,
+            scope: params.scope === "account" || params.scope === "agent" ? params.scope : undefined,
             reason: typeof params.reason === "string" ? params.reason : undefined,
             instruction: typeof params.instruction === "string" ? params.instruction : undefined,
             wait: typeof params.wait === "boolean" ? params.wait : undefined,
@@ -1134,6 +1141,15 @@ const contextEnginePlugin = {
                   query,
                   {
                     targetUri: "viking://resources",
+                    limit: requestLimit,
+                    scoreThreshold: 0,
+                  },
+                  session.agentId,
+                ),
+                recallClient.find(
+                  query,
+                  {
+                    targetUri: "viking://agent/resources",
                     limit: requestLimit,
                     scoreThreshold: 0,
                   },

@@ -362,6 +362,40 @@ class TestResourceExistenceCheck:
         assert updated_task.last_execution_time is not None
 
     @pytest.mark.asyncio
+    async def test_agent_resource_task_restores_namespace_policy(
+        self, temp_storage: Path, request_context: RequestContext
+    ):
+        test_file = temp_storage / "agent_resource.txt"
+        test_file.write_text("test content")
+        resource_service = ResourceService(
+            vikingdb=MockVikingDB(),
+            viking_fs=MockVikingFS(root_path=str(temp_storage)),
+            resource_processor=MockResourceProcessor(),
+            skill_processor=MockSkillProcessor(),
+            watch_scheduler=None,
+        )
+        scheduler = WatchScheduler(resource_service=resource_service, viking_fs=None)
+        await scheduler.start()
+
+        task = await scheduler.watch_manager.create_task(
+            path=str(test_file),
+            account_id="acct",
+            user_id="alice",
+            agent_id="planner",
+            to_uri="viking://agent/planner/user/alice/resources/private",
+            scope="agent",
+            namespace_policy={"isolate_agent_scope_by_user": True},
+            watch_interval=30.0,
+        )
+
+        await scheduler._execute_task(task)
+
+        updated_task = await scheduler.watch_manager.get_task(task.task_id)
+        assert updated_task is not None
+        assert updated_task.is_active is True
+        assert updated_task.last_execution_time is not None
+
+    @pytest.mark.asyncio
     async def test_url_resources_always_considered_existing(
         self, temp_storage: Path, request_context: RequestContext
     ):

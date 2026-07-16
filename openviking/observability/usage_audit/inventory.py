@@ -9,7 +9,11 @@ import logging
 import time
 from typing import Any
 
-from openviking.core.namespace import canonical_agent_root, canonical_user_root
+from openviking.core.namespace import (
+    canonical_agent_resources_root,
+    canonical_agent_root,
+    canonical_user_root,
+)
 from openviking.pyagfs.exceptions import AGFSNotFoundError
 from openviking.server.identity import RequestContext
 from openviking_cli.exceptions import NotFoundError
@@ -46,12 +50,14 @@ class ContextInventoryProvider:
         user_root = canonical_user_root(ctx)
         agent_root = canonical_agent_root(ctx)
 
-        files, skills, user_memories, agent_memories = await asyncio.gather(
+        account_files, agent_files, skills, user_memories, agent_memories = await asyncio.gather(
             self._stat_count("viking://resources", ctx=ctx),
+            self._stat_count(canonical_agent_resources_root(ctx), ctx=ctx),
             self._stat_count(f"{agent_root}/skills", ctx=ctx),
             self._stat_count(f"{user_root}/memories", ctx=ctx),
             self._stat_count(f"{agent_root}/memories", ctx=ctx),
         )
+        files = account_files + agent_files
         memories = user_memories + agent_memories
         return {
             "files": files,

@@ -76,8 +76,10 @@ class Summarizer:
                 return None if value is None else bool(value)
             return bool(target_preexisting_arg)
 
+        resource_root = (kwargs.get("resource_root") or "viking://resources").rstrip("/")
+
         def is_resources_root(uri: str) -> bool:
-            return (uri or "").rstrip("/") == "viking://resources"
+            return (uri or "").rstrip("/") == resource_root
 
         async def list_top_children(temp_uri: str) -> List[Tuple[str, str]]:
             viking_fs = get_viking_fs()
@@ -104,7 +106,7 @@ class Summarizer:
                         "message": f"no top-level import items found under temp uri: {temp_uri}",
                     }
                 for name, child_temp_uri in children:
-                    child_target_uri = VikingURI("viking://resources").join(name).uri
+                    child_target_uri = VikingURI(resource_root).join(name).uri
                     enqueue_units.append((child_target_uri, child_temp_uri))
             else:
                 enqueue_units.append((uri, temp_uri))

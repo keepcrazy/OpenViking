@@ -10,7 +10,7 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,12 @@ class WatchTask(BaseModel):
     parent_uri: Optional[str] = Field(None, description="Parent URI")
     reason: str = Field(default="", description="Reason for monitoring")
     instruction: str = Field(default="", description="Monitoring instruction")
+    scope: Literal["account", "agent"] = Field(
+        default="account", description="Resource ownership scope"
+    )
+    namespace_policy: Dict[str, bool] = Field(
+        default_factory=dict, description="Namespace policy used when the task was created"
+    )
     watch_interval: float = Field(default=60.0, description="Monitoring interval in minutes")
     build_index: bool = Field(default=True, description="Whether to build vector index")
     summarize: bool = Field(default=False, description="Whether to generate summary")
@@ -64,6 +70,8 @@ class WatchTask(BaseModel):
             "parent_uri": self.parent_uri,
             "reason": self.reason,
             "instruction": self.instruction,
+            "scope": self.scope,
+            "namespace_policy": self.namespace_policy,
             "watch_interval": self.watch_interval,
             "build_index": self.build_index,
             "summarize": self.summarize,
@@ -93,6 +101,8 @@ class WatchTask(BaseModel):
             data["next_execution_time"] = datetime.fromisoformat(data["next_execution_time"])
         if data.get("processor_kwargs") is None:
             data["processor_kwargs"] = {}
+        if data.get("namespace_policy") is None:
+            data["namespace_policy"] = {}
         return cls(**data)
 
     def calculate_next_execution_time(self) -> datetime:
@@ -342,6 +352,8 @@ class WatchManager:
         parent_uri: Optional[str] = None,
         reason: str = "",
         instruction: str = "",
+        scope: Literal["account", "agent"] = "account",
+        namespace_policy: Optional[Dict[str, bool]] = None,
         watch_interval: float = 60.0,
         build_index: bool = True,
         summarize: bool = False,
@@ -385,6 +397,8 @@ class WatchManager:
                 parent_uri=parent_uri,
                 reason=reason,
                 instruction=instruction,
+                scope=scope,
+                namespace_policy=namespace_policy or {},
                 watch_interval=watch_interval,
                 build_index=build_index,
                 summarize=summarize,
@@ -419,6 +433,8 @@ class WatchManager:
         parent_uri: Optional[str] = None,
         reason: Optional[str] = None,
         instruction: Optional[str] = None,
+        scope: Optional[Literal["account", "agent"]] = None,
+        namespace_policy: Optional[Dict[str, bool]] = None,
         watch_interval: Optional[float] = None,
         build_index: Optional[bool] = None,
         summarize: Optional[bool] = None,
@@ -478,6 +494,10 @@ class WatchManager:
                 task.reason = reason
             if instruction is not None:
                 task.instruction = instruction
+            if scope is not None:
+                task.scope = scope
+            if namespace_policy is not None:
+                task.namespace_policy = namespace_policy
             if watch_interval is not None:
                 if watch_interval <= 0:
                     if is_active is True:

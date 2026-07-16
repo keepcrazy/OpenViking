@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Optional, Set
 
 from openviking.resource.watch_manager import WatchManager
-from openviking.server.identity import RequestContext, Role
+from openviking.server.identity import AccountNamespacePolicy, RequestContext, Role
 from openviking.service.resource_service import ResourceService
 from openviking_cli.utils import get_logger
 
@@ -240,6 +240,9 @@ class WatchScheduler:
                 ctx = RequestContext(
                     user=user,
                     role=role,
+                    namespace_policy=AccountNamespacePolicy.from_dict(
+                        getattr(task, "namespace_policy", None)
+                    ),
                 )
 
                 processor_kwargs = dict(getattr(task, "processor_kwargs", {}) or {})
@@ -252,6 +255,7 @@ class WatchScheduler:
                     parent=task.parent_uri,
                     reason=task.reason,
                     instruction=task.instruction,
+                    scope=getattr(task, "scope", "account"),
                     build_index=getattr(task, "build_index", True),
                     summarize=getattr(task, "summarize", False),
                     watch_interval=task.watch_interval,

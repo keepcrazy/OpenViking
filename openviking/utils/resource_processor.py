@@ -112,6 +112,7 @@ class ResourceProcessor:
         user: Optional[str] = None,
         to: Optional[str] = None,
         parent: Optional[str] = None,
+        resource_root: Optional[str] = None,
         summarize: bool = False,
         **kwargs,
     ) -> Dict[str, Any]:
@@ -220,6 +221,7 @@ class ResourceProcessor:
                         source_path=parse_result.source_path,
                         source_format=parse_result.source_format,
                         create_parent=kwargs.get("create_parent", False),
+                        resource_root=resource_root,
                     )
                     if context_tree and context_tree.root:
                         result["root_uri"] = context_tree.root.uri
@@ -320,6 +322,7 @@ class ResourceProcessor:
                             temp_uris=[temp_uri_for_summarize],
                             is_code_repo=is_code_repo,
                             target_preexisting=target_preexisting,
+                            resource_root=resource_root,
                             **kwargs,
                         )
                         if (

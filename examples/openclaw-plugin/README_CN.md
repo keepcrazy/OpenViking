@@ -242,17 +242,20 @@ preflight 阶段的 `assemble()` 并不是简单地把旧聊天记录塞回来�
 
 Resource 和 skill 保持两个入口，因为它们落在不同 OpenViking 命名空间，并使用不同服务端 API：
 
-- resource 走 `/api/v1/resources`，落到 `viking://resources/...`
+- resource 走 `/api/v1/resources`；agent 级资源落到 `viking://agent/{agent_id}/resources/...`，account 级共享资源落到 `viking://resources/...`
 - skill 走 `/api/v1/skills`，落到 `viking://agent/skills/...`
 
 插件也提供显式 slash command，方便手动导入：
 
 ```text
-/add-resource ./README.md --to viking://resources/openviking-readme --wait
+/add-resource ./README.md --wait
+/add-resource ./team-handbook.md --scope account --to viking://resources/team-handbook --wait
 /add-skill ./skills/install-openviking-memory --wait
 /memory-search "OpenViking install" --uri viking://resources/openviking-readme
 /memory-search "memory install skill" --uri viking://agent/skills
 ```
+
+Resource 导入默认使用 `scope=agent`。只有明确属于团队或 account 的共享知识才使用 `scope=account`；任务专属或归属不明确的资源保留在 agent scope。插件会始终把最终判断出的 scope 显式发送给服务端。
 
 Resource 导入支持远程 URL、Git URL、本地文件、本地目录和 zip。OpenViking 内置 parser 覆盖常见文档和媒体类型，例如 Markdown、纯文本、PDF、HTML、Word、PowerPoint、Excel、EPUB、图片、音频和视频。目录导入还支持常见代码、文档和配置扩展名，例如 `.py`、`.js`、`.ts`、`.go`、`.rs`、`.java`、`.cpp`、`.json`、`.yaml`、`.toml`、`.csv`、`.rst`、`.proto`、`.tf`、`.vue`。
 

@@ -242,17 +242,20 @@ They serve different roles:
 
 Resource and skill imports are intentionally separate because they land in different OpenViking namespaces and use different server APIs:
 
-- resources go through `/api/v1/resources` and land under `viking://resources/...`
+- resources go through `/api/v1/resources`; agent-scoped resources land under `viking://agent/{agent_id}/resources/...`, while account-scoped resources land under `viking://resources/...`
 - skills go through `/api/v1/skills` and land under `viking://agent/skills/...`
 
 The plugin also registers explicit slash commands for manual imports:
 
 ```text
-/add-resource ./README.md --to viking://resources/openviking-readme --wait
+/add-resource ./README.md --wait
+/add-resource ./team-handbook.md --scope account --to viking://resources/team-handbook --wait
 /add-skill ./skills/install-openviking-memory --wait
 /memory-search "OpenViking install" --uri viking://resources/openviking-readme
 /memory-search "memory install skill" --uri viking://agent/skills
 ```
+
+Resource imports default to `scope=agent`. The agent uses `scope=account` only for explicitly shared team or account knowledge; task-specific or ambiguous resources stay agent-scoped. The plugin always sends the resolved scope to the server.
 
 Resource import supports remote URLs, Git URLs, local files, local directories, and uploaded zip files. OpenViking's built-in parsers cover common documents and media such as Markdown, text, PDF, HTML, Word, PowerPoint, Excel, EPUB, images, audio, and video. Directory imports also accept common code, documentation, and config file extensions such as `.py`, `.js`, `.ts`, `.go`, `.rs`, `.java`, `.cpp`, `.json`, `.yaml`, `.toml`, `.csv`, `.rst`, `.proto`, `.tf`, and `.vue`.
 

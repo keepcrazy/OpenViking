@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0
 """Resource endpoints for OpenViking HTTP Server."""
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -35,6 +35,8 @@ class AddResourceRequest(BaseModel):
             If not specified, an auto-generated URI will be used.
         parent: Parent URI under which the resource will be stored.
             Cannot be used together with 'to'.
+        scope: Resource ownership scope. Defaults to account for API compatibility.
+            Agent scope stores resources under the current Agent's isolated namespace.
         create_parent: Whether to automatically create the parent directory if it doesn't exist.
             Default is False.
         reason: Reason for adding the resource. Used for documentation and monitoring.
@@ -68,6 +70,7 @@ class AddResourceRequest(BaseModel):
     temp_file_id: Optional[str] = None
     to: Optional[str] = None
     parent: Optional[str] = None
+    scope: Literal["account", "agent"] = "account"
     create_parent: bool = False
     reason: str = ""
     instruction: str = ""
@@ -192,6 +195,8 @@ async def add_resource(
 ):
     """Add resource to OpenViking."""
     service = get_service()
+    if request.scope == "agent":
+        await service.initialize_agent_directories(_ctx)
     if request.to and request.parent:
         raise InvalidArgumentError("Cannot specify both 'to' and 'parent' at the same time.")
 
@@ -241,6 +246,7 @@ async def add_resource(
                 ctx=_ctx,
                 to=to,
                 parent=parent,
+                scope=request.scope,
                 reason=request.reason,
                 instruction=request.instruction,
                 wait=request.wait,

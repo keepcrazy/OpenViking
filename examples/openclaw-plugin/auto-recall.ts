@@ -198,6 +198,11 @@ export async function buildAutoRecallContext(params: {
             limit: candidateLimit,
             scoreThreshold: 0,
           }, agentId),
+          client.find(queryText, {
+            targetUri: "viking://agent/resources",
+            limit: candidateLimit,
+            scoreThreshold: 0,
+          }, agentId),
         );
       }
       const autoRecallSettled = await Promise.allSettled(autoRecallPromises);

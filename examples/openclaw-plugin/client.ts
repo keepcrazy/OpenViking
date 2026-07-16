@@ -26,6 +26,7 @@ export type FindResult = {
 
 export type CaptureMode = "semantic" | "keyword";
 export type ScopeName = "user" | "agent";
+export type ResourceScope = "account" | "agent";
 export type AgentScopeMode = "user_agent" | "agent";
 export type RuntimeIdentity = {
   userId: string;
@@ -149,6 +150,7 @@ export type AddResourceInput = {
   pathOrUrl: string;
   to?: string;
   parent?: string;
+  scope?: ResourceScope;
   reason?: string;
   instruction?: string;
   wait?: boolean;
@@ -169,6 +171,7 @@ export type AddResourceResult = {
   errors?: string[];
   queue_status?: unknown;
   meta?: unknown;
+  scope?: ResourceScope;
 };
 
 export type AddSkillInput = {
@@ -201,6 +204,7 @@ const MEMORY_URI_PATTERNS = [
 const USER_STRUCTURE_DIRS = new Set(["memories", "profile.md", ".abstract.md", ".overview.md"]);
 const AGENT_STRUCTURE_DIRS = new Set([
   "memories",
+  "resources",
   "skills",
   "instructions",
   "workspaces",
@@ -632,6 +636,7 @@ export class OpenVikingClient {
     const body: Record<string, unknown> = {
       to: input.to,
       parent: input.parent,
+      scope: input.scope ?? "agent",
       reason: input.reason ?? "",
       instruction: input.instruction ?? "",
       wait: input.wait ?? false,

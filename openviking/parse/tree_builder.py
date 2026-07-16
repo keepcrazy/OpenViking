@@ -92,6 +92,7 @@ class TreeBuilder:
         source_path: Optional[str] = None,
         source_format: Optional[str] = None,
         create_parent: bool = False,
+        resource_root: Optional[str] = None,
     ) -> "BuildingTree":
         """
         Finalize URI metadata for a temp parse result.
@@ -105,8 +106,10 @@ class TreeBuilder:
         viking_fs = get_viking_fs()
         temp_uri = temp_dir_path
 
+        effective_resource_root = (resource_root or "viking://resources").rstrip("/")
+
         def is_resources_root(uri: Optional[str]) -> bool:
-            return (uri or "").rstrip("/") == "viking://resources"
+            return (uri or "").rstrip("/") == effective_resource_root
 
         # 1. Find document root directory
         entries = await viking_fs.ls(temp_uri, ctx=ctx)
@@ -142,6 +145,10 @@ class TreeBuilder:
 
         # 2. Determine base_uri and final document name with org/repo for GitHub/GitLab
         auto_base_uri = self._get_base_uri(scope, source_path, source_format)
+        if auto_base_uri == "viking://resources" or auto_base_uri.startswith(
+            "viking://resources/"
+        ):
+            auto_base_uri = effective_resource_root + auto_base_uri[len("viking://resources") :]
         base_uri = parent_uri or auto_base_uri
         use_to_as_parent = is_resources_root(to_uri)
         # 3. Determine candidate_uri

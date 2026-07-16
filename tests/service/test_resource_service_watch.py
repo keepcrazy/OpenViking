@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import pytest_asyncio
 
+from openviking.core.namespace import canonical_agent_resources_root
 from openviking.resource.watch_manager import WatchManager
 from openviking.server.identity import RequestContext, Role
 from openviking.service.resource_service import ResourceService
@@ -148,6 +149,38 @@ class TestWatchTaskCreation:
         assert task.build_index is False
         assert task.summarize is True
         assert task.processor_kwargs.get("custom_option") == "x"
+
+    @pytest.mark.asyncio
+    async def test_agent_scope_is_canonicalized_and_persisted(
+        self, resource_service: ResourceService, request_context: RequestContext
+    ):
+        result = await resource_service.add_resource(
+            path="/test/path",
+            ctx=request_context,
+            scope="agent",
+            to="viking://agent/resources/private",
+            watch_interval=30.0,
+        )
+
+        expected_uri = f"{canonical_agent_resources_root(request_context)}/private"
+        assert result["scope"] == "agent"
+        assert result["root_uri"] == expected_uri
+        task = await get_task_by_uri(resource_service, expected_uri, request_context)
+        assert task is not None
+        assert task.scope == "agent"
+        assert task.namespace_policy == request_context.namespace_policy.to_dict()
+
+    @pytest.mark.asyncio
+    async def test_agent_scope_rejects_another_agent_target(
+        self, resource_service: ResourceService, request_context: RequestContext
+    ):
+        with pytest.raises(InvalidArgumentError, match="current Agent resource scope"):
+            await resource_service.add_resource(
+                path="/test/path",
+                ctx=request_context,
+                scope="agent",
+                to="viking://agent/other/user/test_user/resources/private",
+            )
 
     @pytest.mark.asyncio
     async def test_create_watch_task_with_default_interval(

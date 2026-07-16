@@ -15,7 +15,11 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from openviking.core.namespace import canonical_agent_root, canonical_user_root
+from openviking.core.namespace import (
+    canonical_agent_resources_root,
+    canonical_agent_root,
+    canonical_user_root,
+)
 from openviking.models.embedder.base import EmbedResult, embed_compat
 from openviking.models.rerank import RerankClient
 from openviking.retrieve.memory_lifecycle import hotness_score
@@ -639,11 +643,13 @@ class HierarchicalRetriever:
 
         user_root = canonical_user_root(ctx)
         agent_root = canonical_agent_root(ctx)
+        agent_resources_root = canonical_agent_resources_root(ctx)
         if context_type is None:
             return [
                 f"{user_root}/memories",
                 f"{agent_root}/memories",
                 "viking://resources",
+                agent_resources_root,
                 f"{agent_root}/skills",
             ]
         elif context_type == ContextType.MEMORY:
@@ -652,7 +658,7 @@ class HierarchicalRetriever:
                 f"{agent_root}/memories",
             ]
         elif context_type == ContextType.RESOURCE:
-            return ["viking://resources"]
+            return ["viking://resources", agent_resources_root]
         elif context_type == ContextType.SKILL:
             return [f"{agent_root}/skills"]
         return []

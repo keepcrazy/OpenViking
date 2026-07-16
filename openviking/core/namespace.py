@@ -11,6 +11,7 @@ from openviking_cli.utils.uri import VikingURI
 _USER_SHORTHAND_SEGMENTS = {"memories", "profile.md", ".abstract.md", ".overview.md"}
 _AGENT_SHORTHAND_SEGMENTS = {
     "memories",
+    "resources",
     "skills",
     "instructions",
     "workspaces",
@@ -20,7 +21,7 @@ _AGENT_SHORTHAND_SEGMENTS = {
 _CROSS_SCOPE_OWNER_SEGMENT = {"user": "agent", "agent": "user"}
 _CONTENT_TYPES_BY_SCOPE = {
     "user": {"memories": "memory"},
-    "agent": {"memories": "memory", "skills": "skill"},
+    "agent": {"memories": "memory", "resources": "resource", "skills": "skill"},
 }
 
 
@@ -175,6 +176,10 @@ def to_user_space(namespace_policy, user_id, agent_id) -> str:
 
 def canonical_agent_root(ctx: RequestContext) -> str:
     return f"viking://agent/{agent_space_fragment(ctx)}"
+
+
+def canonical_agent_resources_root(ctx: RequestContext) -> str:
+    return f"{canonical_agent_root(ctx)}/resources"
 
 
 def agent_space_fragment(ctx: RequestContext) -> str:
