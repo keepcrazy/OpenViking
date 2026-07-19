@@ -25,6 +25,7 @@ type CommandDef = {
   handler: (ctx: {
     args?: string;
     commandBody: string;
+    senderId?: string;
     sessionKey?: string;
     sessionId?: string;
     agentId?: string;
@@ -1097,13 +1098,13 @@ describe("Plugin registration", () => {
     expect(headers.get("X-OpenViking-Agent")).toBe("worker");
   });
 
-  it("add_resource propagates configured tenant headers", async () => {
+  it("add_resource falls back to configured tenant headers without sender identity", async () => {
     const fetchMock = vi.fn(async () =>
       okResponse({ root_uri: "viking://resources/shared-docs", status: "success" }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const { tools, api } = setupPlugin();
+    const { factoryTools, api } = setupPlugin();
     api.pluginConfig = {
       ...api.pluginConfig,
       accountId: "acct-shared",
@@ -1111,7 +1112,10 @@ describe("Plugin registration", () => {
     };
     contextEnginePlugin.register(api as any);
 
-    const tool = tools.get("add_resource")!;
+    const tool = factoryTools.get("add_resource")!({
+      sessionId: "test-session",
+      senderId: undefined,
+    });
     await tool.execute("tc-add-resource", {
       source: "https://example.com/docs",
       to: "viking://resources/shared-docs",
@@ -1124,6 +1128,94 @@ describe("Plugin registration", () => {
     expect(headers.get("X-OpenViking-Account")).toBe("acct-shared");
     expect(headers.get("X-OpenViking-User")).toBe("alice");
     expect(JSON.parse(String(init.body))).toMatchObject({ scope: "account" });
+  });
+
+  it.each([
+    {
+      toolName: "add_resource",
+      endpoint: "/api/v1/resources",
+      params: { source: "https://example.com/docs" },
+      response: { root_uri: "viking://agent/resources/runtime-docs", status: "success" },
+    },
+    {
+      toolName: "add_skill",
+      endpoint: "/api/v1/skills",
+      params: { data: "name: demo\n" },
+      response: { uri: "viking://agent/skills/demo", name: "demo" },
+    },
+  ])("$toolName prefers requesterSenderId for tenant user identity", async ({
+    toolName,
+    endpoint,
+    params,
+    response,
+  }) => {
+    const fetchMock = vi.fn(async () => okResponse(response));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { factoryTools, api } = setupPlugin(undefined, {
+      accountId: "acct-shared",
+      userId: "legacy-user",
+    });
+    contextEnginePlugin.register(api as any);
+
+    const tool = factoryTools.get(toolName)!({
+      sessionId: "runtime-session",
+      requesterSenderId: "f4443623",
+    });
+    await tool.execute(`tc-${toolName}-runtime-user`, params);
+
+    const [, init] = fetchMock.mock.calls.find((call) =>
+      String(call[0]).endsWith(endpoint),
+    ) as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(headers.get("X-OpenViking-Account")).toBe("acct-shared");
+    expect(headers.get("X-OpenViking-User")).toBe("f4443623");
+  });
+
+  it.each([
+    {
+      commandName: "add-resource",
+      args: "https://example.com/docs",
+      endpoint: "/api/v1/resources",
+      response: { root_uri: "viking://agent/resources/runtime-docs", status: "success" },
+    },
+    {
+      commandName: "add-skill",
+      args: "README.md",
+      endpoint: "/api/v1/skills",
+      response: { uri: "viking://agent/skills/demo", name: "demo" },
+    },
+  ])("$commandName command uses senderId for tenant user identity", async ({
+    commandName,
+    args,
+    endpoint,
+    response,
+  }) => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.endsWith("/api/v1/resources/temp_upload")
+        ? okResponse({ temp_file_id: "upload_skill.md" })
+        : okResponse(response),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { commands, api } = setupPlugin(undefined, {
+      accountId: "acct-shared",
+      userId: "legacy-user",
+    });
+    contextEnginePlugin.register(api as any);
+
+    await commands.get(commandName)!.handler({
+      args,
+      commandBody: `/${commandName} ${args}`,
+      senderId: "f4443623",
+    });
+
+    const [, init] = fetchMock.mock.calls.find((call) =>
+      String(call[0]).endsWith(endpoint),
+    ) as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(headers.get("X-OpenViking-Account")).toBe("acct-shared");
+    expect(headers.get("X-OpenViking-User")).toBe("f4443623");
   });
 
   it("add_resource uploads local media attachment paths as resources", async () => {

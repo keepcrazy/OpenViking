@@ -111,6 +111,7 @@ type ToolContext = {
 type PluginCommandContext = {
   args?: string;
   commandBody: string;
+  senderId?: string;
   sessionKey?: string;
   sessionId?: string;
   agentId?: string;
@@ -723,8 +724,8 @@ const contextEnginePlugin = {
       return `Imported OpenViking skill${name}.${uri}`.trim();
     };
 
-    const importResource = async (input: AddResourceInput, agentId?: string) => {
-      const client = await getClient();
+    const importResource = async (input: AddResourceInput, agentId?: string, senderId?: string) => {
+      const client = senderId ? await getUserClient(senderId) : await getClient();
       const result = await client.addResource(input, agentId);
       return {
         content: [{ type: "text" as const, text: formatResourceImportText(result) }],
@@ -735,8 +736,8 @@ const contextEnginePlugin = {
       };
     };
 
-    const importSkill = async (input: AddSkillInput, agentId?: string) => {
-      const client = await getClient();
+    const importSkill = async (input: AddSkillInput, agentId?: string, senderId?: string) => {
+      const client = senderId ? await getUserClient(senderId) : await getClient();
       const result = await client.addSkill(input, agentId);
       return {
         content: [{ type: "text" as const, text: formatSkillImportText(result) }],
@@ -747,7 +748,7 @@ const contextEnginePlugin = {
       };
     };
 
-    const addResourceOpenViking = (input: AddResourceToolInput, agentId?: string) =>
+    const addResourceOpenViking = (input: AddResourceToolInput, agentId?: string, senderId?: string) =>
       importResource({
         pathOrUrl: input.source ?? "",
         to: input.to,
@@ -757,15 +758,15 @@ const contextEnginePlugin = {
         instruction: input.instruction,
         wait: input.wait,
         timeout: input.timeout,
-      }, agentId);
+      }, agentId, senderId);
 
-    const addSkillOpenViking = (input: AddSkillToolInput, agentId?: string) =>
+    const addSkillOpenViking = (input: AddSkillToolInput, agentId?: string, senderId?: string) =>
       importSkill({
         path: input.source,
         data: input.data,
         wait: input.wait,
         timeout: input.timeout,
-      }, agentId);
+      }, agentId, senderId);
 
     const mergeFindResults = (results: FindResult[]): FindResult => {
       const deduplicate = (items: FindResultItem[]): FindResultItem[] => {
@@ -927,7 +928,7 @@ const contextEnginePlugin = {
             instruction: typeof params.instruction === "string" ? params.instruction : undefined,
             wait: typeof params.wait === "boolean" ? params.wait : undefined,
             timeout: typeof params.timeout === "number" ? params.timeout : undefined,
-          }, session.agentId);
+          }, session.agentId, extractToolSenderId(ctx));
         },
       }),
       { name: "add_resource" },
@@ -956,7 +957,7 @@ const contextEnginePlugin = {
             data: params.data,
             wait: typeof params.wait === "boolean" ? params.wait : undefined,
             timeout: typeof params.timeout === "number" ? params.timeout : undefined,
-          }, session.agentId);
+          }, session.agentId, extractToolSenderId(ctx));
         },
       }),
       { name: "add_skill" },
@@ -1004,7 +1005,11 @@ const contextEnginePlugin = {
           }
           const session = resolvePluginSessionRouting(ctx);
           const input = parseAddResourceCommandArgs(ctx.args ?? "");
-          const result = await addResourceOpenViking(input, session.agentId);
+          const result = await addResourceOpenViking(
+            input,
+            session.agentId,
+            extractToolSenderId(ctx),
+          );
           return { text: result.content[0]!.text, details: result.details };
         } catch (err) {
           return { text: `OpenViking add resource failed: ${err instanceof Error ? err.message : String(err)}` };
@@ -1024,7 +1029,11 @@ const contextEnginePlugin = {
           }
           const session = resolvePluginSessionRouting(ctx);
           const input = parseAddSkillCommandArgs(ctx.args ?? "");
-          const result = await addSkillOpenViking(input, session.agentId);
+          const result = await addSkillOpenViking(
+            input,
+            session.agentId,
+            extractToolSenderId(ctx),
+          );
           return { text: result.content[0]!.text, details: result.details };
         } catch (err) {
           return { text: `OpenViking add skill failed: ${err instanceof Error ? err.message : String(err)}` };
